@@ -23,7 +23,7 @@ Both are valid. Both are interesting.
 
 | Rank | Params | Accuracy | Author | Built with | Architecture | Key Tricks | Link |
 |------|--------|----------|--------|------------|-------------|------------|------|
-| 1 | 12 | 100% | [lokimorty](https://github.com/Lokimorty) | | 1L Qwen-derived decoder, d=2, 1h, hd=2, ff=2 | RoPE period-19, parametric tied embedding, sparse attention/MLP, constructive carry hinge | [gist](https://gist.github.com/Lokimorty/cf27201cf6326b04c7328b6abe62248e) |
+| 1 | 10 | 100% | [lokimorty](https://github.com/Lokimorty) | | 1L Qwen-derived decoder, d=2, 1h, hd=2, ff=2 | RoPE period-19, parametric tied embedding, gate tying via algebraic identity, merged carry scalar | [gist](https://gist.github.com/Lokimorty/d54e5c61997e00fb922b6692739a0f6c) |
 | 2 | 20 | 100% | [yieldthought](https://github.com/yieldthought) | | 1L decoder, d=2, 1h, hd=2 | Quadratic tied embedding + tied output head, RoPE-19 digit routing, sparse tied V/O, two-hinge ReLU MLP, parameterless pre-norm | [gist](https://gist.github.com/yieldthought/a48b8d690d31039fadddd2bf297cae99) |
 | 3 | 27 | 100% | [Wonderfall](https://github.com/Wonderfall) ([@w0nderfall](https://x.com/w0nderfall)) | | 1L decoder, d=2, 1h, hd=2 | Tied Q/K + V/O, cross-tied W_vo as MLP w2, factorized quadratic embedding, compressed MLP w1, RoPE period-19 | [gist](https://gist.github.com/Wonderfall/bd1a2396eb9f846637f469d90823b48d) |
 | 4 | 28 | 100% | [jacobli99](https://github.com/SeuperHakkerJa) | | 1L decoder, d=2, 5h (MQA), hd=2, ff=4 | Tied parabolic decode, RoPE digit routing, sparse O-proj, tied MLP, matrix broadcast | [gist](https://gist.github.com/SeuperHakkerJa/da3050739bea97aabd86ee0d7d5ef689) |
@@ -144,7 +144,7 @@ Transformers solve these using attention (for alignment), MLPs (for arithmetic),
 - **Single layers beat two layers** at equivalent parameter budgets (for trained models)
 - **d=7 was the sweet spot** for early trained models — multiple independent teams converged on this
 - **d=4 now works** with rank-3 factorization + grokking (311 params trained)
-- **Hand-coded models can go much smaller** (12 vs 67 trained) since they don't need to be discoverable by SGD
+- **Hand-coded models can go much smaller** (10 vs 67 trained) since they don't need to be discoverable by SGD
 - **Rank-3 factorization** is the key trick for trained models
 - **ALiBi enables extreme compression**: the 36-param leader uses ALiBi with slope log(10) for base-10 positional weighting, achieving 100% accuracy with a 2-layer decoder (d=5) in float64
 
