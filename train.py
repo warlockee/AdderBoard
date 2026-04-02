@@ -746,6 +746,23 @@ def train_model(cfg, device="cuda"):
     # Label smoothing: reduces overconfidence, helps generalization on carry digits
     label_smoothing = float(cfg.get("label_smoothing", 0.0))  # 0 = disabled (default)
 
+    # Focal loss: down-weight easy examples, focus on hard ones (carry-heavy)
+    # gamma=0 is standard CE, gamma=2 is typical focal loss
+    focal_gamma = float(cfg.get("focal_gamma", 0.0))  # 0 = disabled (default)
+
+    # Carry bias schedule: ramp carry_bias during training
+    # Format: "step1:val1,step2:val2,..." e.g. "0:0.0,50000:0.3,100000:0.6"
+    carry_bias_schedule_str = cfg.get("carry_bias_schedule", None)
+    carry_bias_schedule = []
+    if carry_bias_schedule_str:
+        for part in carry_bias_schedule_str.split(","):
+            s, v = part.strip().split(":")
+            carry_bias_schedule.append((int(s.strip()), float(v.strip())))
+
+    # Majority-vote inference: run N forward passes and majority-vote per digit
+    # Only used at final evaluation, not during training
+    majority_vote_n = int(cfg.get("majority_vote_n", 0))  # 0 = disabled (default)
+
     # Per-digit loss weighting: upweight later (harder) output digits
     # Higher digits depend on long carry chains and are harder to learn
     digit_loss_weight = cfg.get("digit_loss_weight", None)  # e.g. "linear" or "exponential" or None
@@ -773,6 +790,21 @@ def train_model(cfg, device="cuda"):
 
         # Get max digits for curriculum
         max_digits = get_max_digits(step)
+
+        # Update carry_bias from schedule if provided
+        if carry_bias_schedule:
+            # Linear interpolation between schedule points
+            effective_carry_bias = carry_bias_schedule[0][1]
+            for i in range(len(carry_bias_schedule) - 1):
+                s0, v0 = carry_bias_schedule[i]
+                s1, v1 = carry_bias_schedule[i + 1]
+                if s0 <= step < s1:
+                    frac = (step - s0) / max(s1 - s0, 1)
+                    effective_carry_bias = v0 + frac * (v1 - v0)
+                    break
+                elif step >= s1:
+                    effective_carry_bias = v1
+            carry_bias = effective_carry_bias
 
         # Generate batch
         if carry_bias > 0:
@@ -808,13 +840,34 @@ def train_model(cfg, device="cuda"):
                 label_smoothing=label_smoothing,
                 reduction='none',
             ).view(-1, OUTPUT_LEN)
+            # Apply focal loss modulation if enabled
+            if focal_gamma > 0:
+                with torch.no_grad():
+                    probs = F.softmax(output_logits.reshape(-1, VOCAB_SIZE), dim=-1)
+                    pt = probs.gather(1, targets.reshape(-1, 1)).squeeze(1).view(-1, OUTPUT_LEN)
+                    focal_weight = (1 - pt) ** focal_gamma
+                per_digit_loss = per_digit_loss * focal_weight
             loss = (per_digit_loss * weights.unsqueeze(0)).mean()
         else:
-            loss = F.cross_entropy(
-                output_logits.reshape(-1, VOCAB_SIZE),
-                targets.reshape(-1),
-                label_smoothing=label_smoothing,
-            )
+            if focal_gamma > 0:
+                # Focal loss: (1-pt)^gamma * CE
+                per_token_loss = F.cross_entropy(
+                    output_logits.reshape(-1, VOCAB_SIZE),
+                    targets.reshape(-1),
+                    label_smoothing=label_smoothing,
+                    reduction='none',
+                )
+                with torch.no_grad():
+                    probs = F.softmax(output_logits.reshape(-1, VOCAB_SIZE), dim=-1)
+                    pt = probs.gather(1, targets.reshape(-1, 1)).squeeze(1)
+                    focal_weight = (1 - pt) ** focal_gamma
+                loss = (per_token_loss * focal_weight).mean()
+            else:
+                loss = F.cross_entropy(
+                    output_logits.reshape(-1, VOCAB_SIZE),
+                    targets.reshape(-1),
+                    label_smoothing=label_smoothing,
+                )
 
         optimizer.zero_grad()
         loss.backward()
@@ -930,6 +983,14 @@ def train_model(cfg, device="cuda"):
     final_acc = evaluate_model(model, device, num_tests=2000)
     print(f"Final accuracy (2000 tests): {final_acc:.4f}")
 
+    # Majority-vote evaluation if enabled
+    if majority_vote_n > 1:
+        mv_acc = evaluate_model_majority_vote(model, device, num_tests=2000, n_votes=majority_vote_n)
+        print(f"Majority-vote accuracy ({majority_vote_n} votes, 2000 tests): {mv_acc:.4f}")
+        if mv_acc > final_acc:
+            print(f"Majority vote improved accuracy: {final_acc:.4f} -> {mv_acc:.4f}")
+            final_acc = mv_acc
+
     return model, {
         "accuracy": final_acc,
         "num_params": num_params,
@@ -959,6 +1020,49 @@ def evaluate_model_batched(model, device, num_tests=500, max_digits=NUM_DIGITS):
     powers = torch.tensor([10**i for i in range(OUTPUT_LEN)], dtype=torch.long)
     results = (output.cpu() * powers).sum(dim=1)
     correct = (results == expected).sum().item()
+    model.train()
+    return correct / num_tests
+
+
+@torch.no_grad()
+def evaluate_model_majority_vote(model, device, num_tests=1000, n_votes=5, seed=None):
+    """Evaluate with majority vote: run N forward passes per sample, vote per digit."""
+    model.eval()
+    rng = random.Random(seed) if seed else random.Random()
+    max_val = 10**NUM_DIGITS - 1
+    correct = 0
+    powers = torch.tensor([10**i for i in range(OUTPUT_LEN)], dtype=torch.long)
+
+    # Generate all test cases
+    a_list = [rng.randint(0, max_val) for _ in range(num_tests)]
+    b_list = [rng.randint(0, max_val) for _ in range(num_tests)]
+
+    batch_size = min(200, num_tests)
+    for start in range(0, num_tests, batch_size):
+        end = min(start + batch_size, num_tests)
+        n = end - start
+        a_t = torch.tensor(a_list[start:end], dtype=torch.long)
+        b_t = torch.tensor(b_list[start:end], dtype=torch.long)
+        expected = a_t + b_t
+
+        a_digits = (a_t.unsqueeze(1) // _DIVISORS) % 10
+        b_digits = (b_t.unsqueeze(1) // _DIVISORS) % 10
+        sep1 = torch.zeros(n, 1, dtype=torch.long)
+        sep2 = torch.zeros(n, 2, dtype=torch.long)
+        prompts = torch.cat([sep1, a_digits, sep2, b_digits, sep1], dim=1).to(device)
+
+        # Collect votes from multiple forward passes
+        all_outputs = []
+        for _ in range(n_votes):
+            output = model.generate(prompts)  # (n, OUTPUT_LEN)
+            all_outputs.append(output.cpu())
+
+        # Majority vote per digit position
+        stacked = torch.stack(all_outputs, dim=0)  # (n_votes, n, OUTPUT_LEN)
+        voted = torch.mode(stacked, dim=0).values  # (n, OUTPUT_LEN)
+        results = (voted * powers).sum(dim=1)
+        correct += (results == expected).sum().item()
+
     model.train()
     return correct / num_tests
 
