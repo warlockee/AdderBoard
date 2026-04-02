@@ -85,7 +85,7 @@ roles:
   code_evolution:
     mode: claude
     triggered_by: fsm
-    rules_file: CODE_EVOLUTION_RULES.md
+    rules_file: orze-pro/src/orze_pro/prompts/CODE_EVOLUTION_RULES.md
     timeout: 900
     model: opus
     allowed_tools: "Read,Write,Edit,Glob,Grep,Bash"
@@ -100,7 +100,7 @@ roles:
     allowed_tools: "Read,Write,Edit,Glob,Grep,Bash"
   professor:
     mode: claude
-    rules_file: PROFESSOR_RULES.md
+    rules_file: orze-pro/src/orze_pro/prompts/PROFESSOR_RULES.md
     cooldown: 600
     timeout: 600
     model: opus
