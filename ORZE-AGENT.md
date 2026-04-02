@@ -139,27 +139,34 @@ ANTHROPIC_API_KEY=...
 ```
 
 ### 9c: Set up FSM engine
-Copy the FSM runner to the project (it's part of orze basic):
+The FSM engine ships with orze >= 3.1.0. Create a thin wrapper that calls the installed runner:
 ```bash
 mkdir -p fsm/plugins procedures
-# The FSM engine is installed with orze >= 3.1.0
-# The runner discovers pro procedures from the installed orze-pro package
 ```
 
-Create `fsm/runner.py` if it doesn't exist — it ships with orze >= 3.1.0. Check:
+Create `fsm/runner.py` as a one-liner that calls the installed package:
 ```python
-from orze.fsm.runner import main  # if installed
+#!/usr/bin/env python3
+"""FSM runner — delegates to installed orze package."""
+from orze.fsm.runner import main
+if __name__ == "__main__":
+    main()
 ```
-If not available from the installed package, copy from `orze/src/orze/fsm/runner.py`.
+
+The runner auto-discovers pro procedures and plugins from the installed orze-pro package.
+No need to copy files — everything resolves from pip-installed packages.
 
 ### 9d: Configure pro roles in orze.yaml
 
-Resolve prompt paths from the installed package:
+**IMPORTANT**: Resolve prompt paths from the installed package, NOT from a submodule.
+Run this to get the absolute path:
 ```python
-import orze_pro
-pro_dir = Path(orze_pro.__file__).parent
-prompts_dir = pro_dir / "prompts"
+import orze_pro; from pathlib import Path
+prompts = Path(orze_pro.__file__).parent / "prompts"
+print(prompts)  # e.g. /home/user/venv/lib/python3.10/site-packages/orze_pro/prompts
 ```
+
+Use the resolved absolute path in orze.yaml (not relative or submodule paths).
 
 Add these roles to orze.yaml:
 ```yaml
