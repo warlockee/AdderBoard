@@ -106,6 +106,14 @@ roles:
     model: opus
     allowed_tools: "Read,Write,Edit,Glob,Grep,Bash"
     pausable: false           # professor reviews even when research is paused
+  bug_fixer:
+    mode: claude
+    triggered_by: fsm
+    rules_file: orze-pro/src/orze_pro/prompts/BUG_FIXER_RULES.md
+    timeout: 600
+    model: opus
+    allowed_tools: "Read,Write,Edit,Glob,Grep,Bash"
+    pausable: false           # bug fixer runs even when research is paused
   fsm:
     mode: script
     script: fsm/runner.py
