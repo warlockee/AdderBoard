@@ -5,7 +5,7 @@ train_script: train.py
 ideas_file: ideas.md
 base_config: configs/base.yaml
 results_dir: results
-python: /ceph/workspace/erik/adderboard/venv/bin/python3
+python: /home/azureuser/AdderBoard/venv/bin/python3
 
 # --- ENV ---
 train_extra_env:
@@ -15,7 +15,7 @@ train_extra_env:
 gpu_scheduling:
   max_vram_pct: 85          # stop filling GPU at 85% VRAM
   min_free_vram_mib: 2000   # require 2GB free minimum
-  max_jobs_per_gpu: 200     # safety cap (VRAM-based)
+  max_jobs_per_gpu: 3       # spread across all 4 GPUs (tiny models use <1GB each)
   max_load_per_cpu: 1.0     # throttle when load/cpu exceeds this (shared machine)
   min_free_ram_gb: 32       # throttle when free RAM drops below 32GB
 
@@ -58,20 +58,57 @@ report:
     - {key: "training_time", label: "Time(s)", fmt: ".0f"}
 
 # --- RETROSPECTION ---
+# Detection only — FSM owns all pause/trigger decisions
 retrospection:
   enabled: true
   interval: 6
-  auto_pause: false
-  plateau_window: 10
+  auto_pause: false           # FSM controls pausing, not orze
+  plateau_window: 20
   fail_window: 10
-  fail_threshold: 0.8
+  fail_threshold: 0.5
+
+# --- CODE EVOLUTION ---
+# Disabled at orze level — FSM dispatches triggers
+evolution:
+  enabled: false              # FSM writes _trigger_code_evolution, not orze
 
 # --- RESEARCH AGENT ---
 roles:
   research:
-    mode: claude
+    mode: research
+    backend: gemini
     rules_file: RESEARCH_RULES.md
     cooldown: 120
     timeout: 600
+    model: gemini-3.1-pro-preview
+    allowed_tools: "Read,Write,Edit,Glob,Grep,Bash"
+  code_evolution:
+    mode: claude
+    triggered_by: fsm
+    rules_file: CODE_EVOLUTION_RULES.md
+    timeout: 900
     model: opus
     allowed_tools: "Read,Write,Edit,Glob,Grep,Bash"
+  meta_research:
+    mode: research
+    backend: gemini
+    triggered_by: fsm
+    rules_file: RESEARCH_RULES.md
+    cooldown: 3600
+    timeout: 600
+    model: gemini-3.1-pro-preview
+    allowed_tools: "Read,Write,Edit,Glob,Grep,Bash"
+  professor:
+    mode: claude
+    rules_file: PROFESSOR_RULES.md
+    cooldown: 600
+    timeout: 600
+    model: opus
+    allowed_tools: "Read,Write,Edit,Glob,Grep,Bash"
+    pausable: false           # professor reviews even when research is paused
+  fsm:
+    mode: script
+    script: fsm/runner.py
+    args: ["--results-dir", "{results_dir}"]
+    cooldown: 120
+    timeout: 30

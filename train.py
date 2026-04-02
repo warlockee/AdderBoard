@@ -688,10 +688,23 @@ def train_model(cfg, device="cuda"):
         optimizer = torch.optim.AdamW(model.parameters(), lr=lr, weight_decay=weight_decay)
 
     # LR schedule
+    lr_restart_period = int(cfg.get("lr_restart_period", 0))  # 0 = single cosine (default)
+    lr_restart_mult = float(cfg.get("lr_restart_mult", 1.0))  # period multiplier after each restart
+
     def get_lr(step):
         if step < warmup_steps:
             return lr * step / max(warmup_steps, 1)
-        progress = (step - warmup_steps) / max(steps - warmup_steps, 1)
+        t = step - warmup_steps
+        total = max(steps - warmup_steps, 1)
+        if lr_restart_period > 0:
+            # Cosine annealing with warm restarts (SGDR)
+            period = lr_restart_period
+            while t >= period and period < total:
+                t -= period
+                period = int(period * lr_restart_mult)
+            progress = t / max(period, 1)
+        else:
+            progress = t / total
         return min_lr + 0.5 * (lr - min_lr) * (1 + math.cos(math.pi * progress))
 
     # Parse curriculum
@@ -719,6 +732,29 @@ def train_model(cfg, device="cuda"):
     # Grokfast-EMA: gradient filter to accelerate grokking
     grokfast_alpha = float(cfg.get("grokfast_alpha", 0))
     grokfast_lambda = float(cfg.get("grokfast_lambda", 0))
+
+    # Gradient noise injection: helps escape saddle points in tiny models
+    grad_noise_eta = float(cfg.get("grad_noise_eta", 0))  # 0 = disabled (default)
+    grad_noise_gamma = float(cfg.get("grad_noise_gamma", 0.55))  # decay exponent
+
+    # Stochastic Weight Averaging: averages weights for better generalization
+    swa_start_frac = float(cfg.get("swa_start_frac", 0))  # 0 = disabled (default)
+    swa_update_freq = int(cfg.get("swa_update_freq", 100))  # steps between SWA updates
+    swa_state = None
+    swa_count = 0
+
+    # Label smoothing: reduces overconfidence, helps generalization on carry digits
+    label_smoothing = float(cfg.get("label_smoothing", 0.0))  # 0 = disabled (default)
+
+    # Per-digit loss weighting: upweight later (harder) output digits
+    # Higher digits depend on long carry chains and are harder to learn
+    digit_loss_weight = cfg.get("digit_loss_weight", None)  # e.g. "linear" or "exponential" or None
+    digit_loss_scale = float(cfg.get("digit_loss_scale", 2.0))  # max weight for last digit
+
+    # EMA of model weights: smoother convergence than SWA
+    ema_decay = float(cfg.get("ema_decay", 0.0))  # 0 = disabled (default), typical: 0.999
+    ema_start_step = int(cfg.get("ema_start_step", 0))  # step to start EMA tracking
+    ema_state = None
 
     # Training loop
     model.train()
@@ -753,10 +789,32 @@ def train_model(cfg, device="cuda"):
 
         # Loss only on output positions (predict target from prompt context)
         output_logits = logits[:, prompt_len - 1:prompt_len - 1 + OUTPUT_LEN, :VOCAB_SIZE]
-        loss = F.cross_entropy(
-            output_logits.reshape(-1, VOCAB_SIZE),
-            targets.reshape(-1),
-        )
+
+        if digit_loss_weight and digit_loss_weight != "none":
+            # Per-digit weighted loss: upweight harder (later) digits
+            # output_logits: (B, OUTPUT_LEN, VOCAB_SIZE), targets: (B, OUTPUT_LEN)
+            if digit_loss_weight == "linear":
+                weights = torch.linspace(1.0, digit_loss_scale, OUTPUT_LEN, device=device)
+            elif digit_loss_weight == "exponential":
+                weights = torch.logspace(0, math.log10(digit_loss_scale), OUTPUT_LEN, device=device)
+            else:
+                weights = torch.ones(OUTPUT_LEN, device=device)
+            # Normalize so mean weight = 1
+            weights = weights / weights.mean()
+            # Compute per-sample per-digit loss
+            per_digit_loss = F.cross_entropy(
+                output_logits.reshape(-1, VOCAB_SIZE),
+                targets.reshape(-1),
+                label_smoothing=label_smoothing,
+                reduction='none',
+            ).view(-1, OUTPUT_LEN)
+            loss = (per_digit_loss * weights.unsqueeze(0)).mean()
+        else:
+            loss = F.cross_entropy(
+                output_logits.reshape(-1, VOCAB_SIZE),
+                targets.reshape(-1),
+                label_smoothing=label_smoothing,
+            )
 
         optimizer.zero_grad()
         loss.backward()
@@ -770,9 +828,35 @@ def train_model(cfg, device="cuda"):
                     p._grokfast_ema.mul_(grokfast_alpha).add_(p.grad, alpha=1 - grokfast_alpha)
                     p.grad.add_(p._grokfast_ema, alpha=grokfast_lambda)
 
+        # Gradient noise injection (Neelakantan et al. 2015)
+        if grad_noise_eta > 0:
+            noise_std = math.sqrt(grad_noise_eta / (1 + step) ** grad_noise_gamma)
+            for p in model.parameters():
+                if p.grad is not None:
+                    p.grad.add_(torch.randn_like(p.grad) * noise_std)
+
         if grad_clip > 0:
             torch.nn.utils.clip_grad_norm_(model.parameters(), grad_clip)
         optimizer.step()
+
+        # EMA update: exponential moving average of weights
+        if ema_decay > 0 and step >= ema_start_step:
+            if ema_state is None:
+                ema_state = {k: v.clone() for k, v in model.state_dict().items()}
+            else:
+                with torch.no_grad():
+                    for k in ema_state:
+                        ema_state[k].mul_(ema_decay).add_(model.state_dict()[k], alpha=1 - ema_decay)
+
+        # Stochastic Weight Averaging update
+        if swa_start_frac > 0 and step >= int(steps * swa_start_frac) and step % swa_update_freq == 0:
+            if swa_state is None:
+                swa_state = {k: v.clone() for k, v in model.state_dict().items()}
+                swa_count = 1
+            else:
+                swa_count += 1
+                for k in swa_state:
+                    swa_state[k].add_(model.state_dict()[k] - swa_state[k], alpha=1.0 / swa_count)
 
         # Evaluate
         if step % eval_every == 0 or step == steps:
@@ -813,9 +897,32 @@ def train_model(cfg, device="cuda"):
                 print(f"Time limit {time_limit:.0f}s reached at step {step}, stopping.")
                 break
 
-    # Restore best
-    if best_state is not None:
+    # Apply SWA weights if available, otherwise restore best checkpoint
+    if swa_state is not None and swa_count > 1:
+        print(f"Applying SWA (averaged {swa_count} checkpoints)")
+        model.load_state_dict(swa_state)
+        swa_acc = evaluate_model_batched(model, device, num_tests=500)
+        best_acc_val = best_accuracy
+        if swa_acc >= best_acc_val:
+            print(f"SWA accuracy {swa_acc:.4f} >= best {best_acc_val:.4f}, using SWA weights")
+        elif best_state is not None:
+            print(f"SWA accuracy {swa_acc:.4f} < best {best_acc_val:.4f}, reverting to best checkpoint")
+            model.load_state_dict(best_state)
+    elif best_state is not None:
         model.load_state_dict(best_state)
+
+    # Try EMA weights: often better than best checkpoint for tiny models
+    if ema_state is not None:
+        ema_model_state = model.state_dict()
+        model.load_state_dict(ema_state)
+        ema_acc = evaluate_model_batched(model, device, num_tests=500)
+        current_acc = evaluate_model_batched(model, device, num_tests=500) if best_state is None else best_accuracy
+        if ema_acc >= current_acc:
+            print(f"EMA accuracy {ema_acc:.4f} >= best {current_acc:.4f}, using EMA weights")
+            best_accuracy = max(best_accuracy, ema_acc)
+        else:
+            print(f"EMA accuracy {ema_acc:.4f} < best {current_acc:.4f}, reverting")
+            model.load_state_dict(ema_model_state)
 
     training_time = time.time() - t0
 
@@ -1045,7 +1152,9 @@ def load_idea_config(ideas_md: str, idea_id: str) -> dict:
 def load_idea_from_sqlite(idea_id: str) -> dict:
     """Load idea config from orze's SQLite database (idea_lake.db)."""
     import sqlite3
-    db_path = Path("idea_lake.db")
+    db_path = Path("results/idea_lake.db")
+    if not db_path.exists():
+        db_path = Path("idea_lake.db")
     if not db_path.exists():
         raise FileNotFoundError("idea_lake.db not found")
     conn = sqlite3.connect(str(db_path))
@@ -1089,8 +1198,8 @@ def main():
         try:
             ideas_cfg = load_idea_from_sqlite(args.idea_id)
             idea_cfg = deep_merge(idea_cfg, ideas_cfg)
-        except Exception:
-            print(f"WARNING: Could not load idea config for {args.idea_id}, using base config only")
+        except Exception as e:
+            raise RuntimeError(f"FATAL: Could not load idea config for {args.idea_id}: {e}. Refusing to train with base config only.")
 
     cfg = deep_merge(base_cfg, idea_cfg)
     print(f"Training {args.idea_id} with config: {json.dumps(cfg, indent=2, default=str)}")

@@ -1,0 +1,30 @@
+# Idea verifier: filter garbage ideas before they waste GPU time
+#
+# Runs every FSM tick. Checks queued ideas against known-bad patterns:
+# - Duplicate configs (same hash as completed experiment)
+# - Dead architectures (param counts below viable threshold)
+# - Seed already tried with same config
+# - Known-dead config patterns (share_all_norms, tie_gate, etc.)
+#
+# Saves ~75% of GPU time based on observed 74% garbage rate.
+
+name: idea_verifier
+initial: watching
+
+vars:
+  total_filtered: 0
+  last_filtered_count: 0
+
+states:
+  - name: watching
+    transitions:
+      # Garbage detected → filter it
+      - to: filtering
+        guards: [has_garbage_ideas]
+        actions: [filter_garbage_ideas, notify]
+
+  - name: filtering
+    transitions:
+      # Always return to watching after filtering
+      - to: watching
+        guards: [always]

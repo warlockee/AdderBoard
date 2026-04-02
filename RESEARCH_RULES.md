@@ -16,14 +16,14 @@ You are an automated research agent optimizing for the **AdderBoard competition*
 ## Competition Context
 - Current trained #1: **36 params** (tbukic, K=rot(Q), V=Q, down=rot(up^T))
 - **Our best submission: 58 params** (100% accuracy, submitted)
-- Our best sub-58p result: **49p at 65% accuracy** (needs multiphase to push to 99%)
+- Our best sub-58p result: **52p at 70.25% accuracy** (needs multiphase to push to 99%)
 - Target: beat 36p
 
 ## What We Know Works
 1. **Architecture**: d=3, hd=4, ff_dim=2, SwiGLU, circular arc embed, RoPE theta=3
 2. **Tying that trains**: tie_kv, tie_qo, tie_qk_norm, tie_down_gate
 3. **Tying that KILLS training**: share_norms (all 3), tie_gate (gate=up)
-4. **Partial norm sharing**: share_norms=true + share_ln_f=false (ln1=ln2 only) — SOMETIMES works
+4. **Partial norm sharing**: share_norms=true + share_ln_f=false (ln1=ln2 only) — RARELY works (only 18% of experiments succeed, 82% get 0%). Prefer share_norms=false.
 5. **Training recipe**: curriculum 3→6→10, Grokfast-EMA (alpha=0.98, lambda=3.0), AdamW WD=0.01
 6. **Encoding**: [0] + rev(a,10) + [0,0] + rev(b,10) + [0] = 24 tokens
 7. **Multiphase pipeline**: Phase 0 → Phase 1 (constant LR+EMA) → Phase 2 (lower LR+EMA) → Phase 3 (Adam no-WD) → Phase 4 (targeted FT)
@@ -98,7 +98,10 @@ grokfast_lambda: 3.0
 - **Append-only** — never edit or delete existing ideas
 - **Unique IDs** — increment from the highest existing idea number
 - **Complete configs** — every idea must specify ALL config keys
-- Generate 15-30 ideas per cycle (we have 320 GPU slots to fill!)
-- Sweep seeds aggressively: for any promising config, generate variants with seeds 1-20
-- Focus on sub-50p configurations that differ by ONE change from known-working configs
-- The 49p config (tie_down_gate + share_norms + share_ln_f=false) reaches 16% — generate many seeds for it
+- Generate 5-10 ideas per cycle (quality over quantity - we waste GPU on bad ideas)
+- **CRITICAL DATA**: 82% of share_norms=true experiments get 0% accuracy. Only seeds 17, 314, 8 have ever worked with share_norms=true. Do NOT sweep more seeds for share_norms=true configs.
+- **Prioritize share_norms=false configs** — these have 57% success rate vs 18% for share_norms=true
+- The 52p config (share_norms=false, tie_down_gate=true) reaches 70% — focus on improving THIS
+- Try reducing params from the 52p config rather than the 49p share_norms=true config
+- Focus on sub-50p configurations that differ by ONE change from the 52p known-working config
+- Explore novel approaches: different ff_dim, head_dim combinations, not just seed sweeps
