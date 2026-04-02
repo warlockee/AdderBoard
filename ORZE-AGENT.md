@@ -109,7 +109,127 @@ Install whatever the training script needs into the project venv:
 uv pip install --python venv/bin/python3 torch torchvision ...
 ```
 
-## Step 9: Smoke test
+## Step 9: Detect and activate orze-pro
+
+Check if orze-pro is installed:
+```bash
+python3 -c "import orze_pro; print(orze_pro.__version__)"
+```
+
+**If orze-pro is installed**, activate all pro features:
+
+### 9a: Activate license
+```bash
+orze pro status
+```
+If not activated, ask the user for their license key:
+> "You have orze-pro installed. Enter your license key to activate autopilot features (or press Enter to skip):"
+
+Then run: `orze pro activate <key>`
+
+### 9b: Set up API keys
+Create `.env` with the user's API keys. Ask ONE question:
+> "Which LLM for research? Enter your API key (Gemini/Anthropic/OpenAI):"
+
+Auto-detect the key type from the prefix (`AIza` = Gemini, `sk-ant` = Anthropic, `sk-` = OpenAI) and write:
+```
+GEMINI_API_KEY=...
+# or
+ANTHROPIC_API_KEY=...
+```
+
+### 9c: Set up FSM engine
+Copy the FSM runner to the project (it's part of orze basic):
+```bash
+mkdir -p fsm/plugins procedures
+# The FSM engine is installed with orze >= 3.1.0
+# The runner discovers pro procedures from the installed orze-pro package
+```
+
+Create `fsm/runner.py` if it doesn't exist — it ships with orze >= 3.1.0. Check:
+```python
+from orze.fsm.runner import main  # if installed
+```
+If not available from the installed package, copy from `orze/src/orze/fsm/runner.py`.
+
+### 9d: Configure pro roles in orze.yaml
+
+Resolve prompt paths from the installed package:
+```python
+import orze_pro
+pro_dir = Path(orze_pro.__file__).parent
+prompts_dir = pro_dir / "prompts"
+```
+
+Add these roles to orze.yaml:
+```yaml
+# --- RETROSPECTION ---
+# Detection only — FSM owns all pause/trigger decisions
+retrospection:
+  enabled: true
+  auto_pause: false           # FSM controls pausing
+  plateau_window: 20
+
+# --- CODE EVOLUTION ---
+evolution:
+  enabled: false              # FSM dispatches triggers
+
+roles:
+  research:
+    mode: research
+    backend: <detected from API key>
+    rules_file: RESEARCH_RULES.md
+    cooldown: 120
+    timeout: 600
+    model: <best model for the backend>
+  code_evolution:
+    mode: claude
+    triggered_by: fsm
+    rules_file: <pro_dir>/prompts/CODE_EVOLUTION_RULES.md
+    timeout: 900
+    model: opus
+    allowed_tools: "Read,Write,Edit,Glob,Grep,Bash"
+  meta_research:
+    mode: research
+    backend: <same as research>
+    triggered_by: fsm
+    rules_file: RESEARCH_RULES.md
+    cooldown: 3600
+    timeout: 600
+    model: <same as research>
+  professor:
+    mode: claude
+    rules_file: <pro_dir>/prompts/PROFESSOR_RULES.md
+    cooldown: 600
+    timeout: 600
+    model: opus
+    pausable: false
+    allowed_tools: "Read,Write,Edit,Glob,Grep,Bash"
+  bug_fixer:
+    mode: claude
+    triggered_by: fsm
+    rules_file: <pro_dir>/prompts/BUG_FIXER_RULES.md
+    timeout: 600
+    model: opus
+    pausable: false
+    allowed_tools: "Read,Write,Edit,Glob,Grep,Bash"
+  fsm:
+    mode: script
+    script: fsm/runner.py
+    args: ["--results-dir", "{results_dir}"]
+    cooldown: 120
+    timeout: 30
+```
+
+### 9e: Verify pro setup
+```bash
+orze --check -c orze.yaml
+```
+Must show all roles registered, no errors.
+
+**If orze-pro is NOT installed**, skip this step entirely. Basic orze works fine without it.
+
+## Step 10: Smoke test
 
 ```bash
 orze -c orze.yaml --once --gpus 0
@@ -117,14 +237,23 @@ orze -c orze.yaml --once --gpus 0
 
 If it fails, fix the issue and retry. Do not move on until this passes.
 
-## Step 10: Launch
+## Step 11: Launch
 
 ```bash
-nohup orze -c orze.yaml >> results/orze.log 2>&1 &
+orze start -c orze.yaml
 ```
 
-Tell the user:
-> "Orze is running on [N] GPUs. It will generate ideas, train, and learn automatically. Edit GOAL.md anytime to change direction — the system picks it up in ~30 seconds."
+**If pro is active**, tell the user:
+> "Orze is running on [N] GPUs with autopilot:
+> - Research agent ([model]) generates ideas
+> - The Professor (Opus) reviews idea quality
+> - Code evolution triggers on plateaus
+> - Bug fixer monitors system health
+> - [7] FSM procedures manage the lifecycle
+> Edit GOAL.md anytime to change direction."
+
+**If basic only**, tell the user:
+> "Orze is running on [N] GPUs. It will generate ideas, train, and learn automatically. Edit GOAL.md anytime to change direction."
 
 ## Rules
 
@@ -132,4 +261,5 @@ Tell the user:
 - **Do not explain what each file does.** Just set them up.
 - **Confirm once** (step 2), then execute everything silently.
 - **If something breaks, fix it.** Don't report errors back unless you can't solve them.
+- **Auto-detect everything**: GPU count, model size → max_jobs_per_gpu, API key type → backend.
 - Read `ORZE-RULES.md` for the complete technical spec (idea format, metrics contract, lifecycle).
