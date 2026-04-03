@@ -53,45 +53,31 @@ You are an automated research agent optimizing for the **AdderBoard competition*
 3. **Run multiple seeds** (314, 42, 8, 1337, 99) — training is very seed-sensitive
 4. **If a Phase 0 result shows >5% accuracy, it's promising** — multiphase can push it to 99%+
 
-## Idea Format
-```markdown
-## idea-XXXX: Np description
-- **Priority**: critical
-```yaml
-d_model: 3
-n_heads: 1
-n_kv_heads: 1
-head_dim: 4
-ff_dim: 2
-n_layers: 1
-rope_theta: 3.0
-qk_norm: true
-use_swiglu: true
-use_rope: true
-norm_type: rms
-embed_type: circular_arc
-tie_embed: true
-tie_kv: true
-tie_qo: true
-tie_qk_norm: true
-share_norms: false
-attn_out_rank: 0
-vocab_size: 10
-lr: 0.01
-min_lr: 0.001
-steps: 200000
-batch_size: 128
-warmup_steps: 1000
-weight_decay: 0.01
-grad_clip: 1.0
-eval_every: 2000
-patience: 200000
-optimizer: adamw
-seed: 314
-curriculum: "3:2000,6:7000,10:rest"
-grokfast_alpha: 0.98
-grokfast_lambda: 3.0
-```
+## Output Format
+**Return a JSON array** of idea objects. Each object must have:
+- "title": short descriptive name (e.g. "49p tie-down-gate seed 42")
+- "hypothesis": why this might work
+- "config": dict with ALL config keys below
+- "priority": "critical" | "high" | "medium" | "low"
+- "category": "architecture" | "hyperparameter" | "optimization"
+- "approach_family": "architecture" | "training_config" | "optimization" | "regularization" | "other"
+- "parent": "none" or existing idea ID
+
+**Required config keys** (include ALL of these in every idea):
+```json
+{
+  "d_model": 3, "n_heads": 1, "n_kv_heads": 1, "head_dim": 4,
+  "ff_dim": 2, "n_layers": 1, "rope_theta": 3.0, "qk_norm": true,
+  "use_swiglu": true, "use_rope": true, "norm_type": "rms",
+  "embed_type": "circular_arc", "tie_embed": true, "tie_kv": true,
+  "tie_qo": true, "tie_qk_norm": true, "share_norms": false,
+  "attn_out_rank": 0, "vocab_size": 10, "lr": 0.01, "min_lr": 0.001,
+  "steps": 200000, "batch_size": 128, "warmup_steps": 1000,
+  "weight_decay": 0.01, "grad_clip": 1.0, "eval_every": 2000,
+  "patience": 200000, "optimizer": "adamw", "seed": 314,
+  "curriculum": "3:2000,6:7000,10:rest",
+  "grokfast_alpha": 0.98, "grokfast_lambda": 3.0
+}
 ```
 
 ## Rules

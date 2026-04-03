@@ -78,9 +78,10 @@ roles:
     mode: research
     backend: gemini
     rules_file: RESEARCH_RULES.md
-    cooldown: 120
+    cooldown: 60
     timeout: 600
-    model: gemini-3.1-pro-preview
+    model: gemini-3-pro-preview
+    num_ideas: 5
     allowed_tools: "Read,Write,Edit,Glob,Grep,Bash"
   code_evolution:
     mode: claude
@@ -96,7 +97,7 @@ roles:
     rules_file: RESEARCH_RULES.md
     cooldown: 3600
     timeout: 600
-    model: gemini-3.1-pro-preview
+    model: gemini-3-pro-preview
     allowed_tools: "Read,Write,Edit,Glob,Grep,Bash"
   professor:
     mode: claude
