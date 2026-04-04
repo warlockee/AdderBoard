@@ -80,7 +80,7 @@ roles:
     rules_file: RESEARCH_RULES.md
     cooldown: 60
     timeout: 600
-    model: gemini-2.5-flash
+    model: gemini-2.0-flash
     num_ideas: 5
     allowed_tools: "Read,Write,Edit,Glob,Grep,Bash"
   code_evolution:
@@ -97,7 +97,7 @@ roles:
     rules_file: RESEARCH_RULES.md
     cooldown: 3600
     timeout: 600
-    model: gemini-2.5-flash
+    model: gemini-2.0-flash
     allowed_tools: "Read,Write,Edit,Glob,Grep,Bash"
   professor:
     mode: claude
