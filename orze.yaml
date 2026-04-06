@@ -102,7 +102,7 @@ roles:
     mode: claude
     rules_file: orze-pro/src/orze_pro/prompts/PROFESSOR_RULES.md
     cooldown: 600
-    timeout: 600
+    timeout: 900
     model: opus
     allowed_tools: "Read,Write,Edit,Glob,Grep,Bash"
     pausable: false           # professor reviews even when research is paused
