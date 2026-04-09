@@ -471,7 +471,14 @@ def role_unhealthy(ctx: Context) -> str | None:
         if not log_dir.exists():
             continue
         # FIX: use numeric sort instead of lexicographic
-        logs = _sort_cycle_logs(log_dir.glob("cycle_*.log"))[-5:]  # last 5
+        all_logs = _sort_cycle_logs(log_dir.glob("cycle_*.log"))
+        if len(all_logs) < 2:
+            continue
+        # Skip the newest cycle log — it may still be running (log file
+        # created but output not flushed yet).  This also prevents cycles
+        # killed by SIGTERM during graceful shutdown from creating
+        # permanent 0-byte files that inflate the empty-cycle count.
+        logs = all_logs[-6:-1]  # last 5 *completed* cycles (excluding newest)
         if len(logs) < 3:
             continue
         empty_count = sum(1 for l in logs if l.stat().st_size == 0)
