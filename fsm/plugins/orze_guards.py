@@ -396,12 +396,13 @@ def role_unhealthy(ctx: Context) -> str | None:
     import datetime, subprocess, yaml
 
     unhealthy = []
+    cfg = {}
 
     # --- 1. Config file check: do all rules_files actually exist? ---
     orze_yaml = ctx.results_dir.parent / "orze.yaml"
     if orze_yaml.exists():
         try:
-            cfg = yaml.safe_load(orze_yaml.read_text(encoding="utf-8"))
+            cfg = yaml.safe_load(orze_yaml.read_text(encoding="utf-8")) or {}
             for role_name, role_cfg in (cfg.get("roles") or {}).items():
                 if not isinstance(role_cfg, dict):
                     continue
@@ -413,9 +414,20 @@ def role_unhealthy(ctx: Context) -> str | None:
             pass
 
     # --- 2. Role stall check: last cycle log too old + no process ---
-    grace_min = ctx.vars.get("role_grace_min", 15)
+    base_grace_min = ctx.vars.get("role_grace_min", 15)
     monitored = ctx.vars.get("monitored_roles",
                              ["research", "professor", "fsm"])
+
+    # Build per-role grace periods from orze.yaml timeout + cooldown.
+    # A role that just timed out won't restart until cooldown elapses,
+    # so grace must be >= (timeout + cooldown) to avoid false positives.
+    role_grace = {}
+    for rn, rc in (cfg.get("roles") or {}).items():
+        if not isinstance(rc, dict):
+            continue
+        timeout_s = rc.get("timeout", 600)
+        cooldown_s = rc.get("cooldown", 300)
+        role_grace[rn] = max(base_grace_min, (timeout_s + cooldown_s) / 60 + 2)
 
     for role_name in monitored:
         log_dir = ctx.results_dir / f"_{role_name}_logs"
@@ -426,6 +438,7 @@ def role_unhealthy(ctx: Context) -> str | None:
         if not logs:
             continue
         last_log = logs[-1]
+        grace_min = role_grace.get(role_name, base_grace_min)
         try:
             age_min = (time.time() - last_log.stat().st_mtime) / 60
             if age_min > grace_min:
