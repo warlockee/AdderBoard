@@ -427,7 +427,7 @@ def role_unhealthy(ctx: Context) -> str | None:
             continue
         timeout_s = rc.get("timeout", 600)
         cooldown_s = rc.get("cooldown", 300)
-        role_grace[rn] = max(base_grace_min, (timeout_s + cooldown_s) / 60 + 2)
+        role_grace[rn] = max(base_grace_min, (timeout_s + cooldown_s) / 60 + 5)
 
     for role_name in monitored:
         log_dir = ctx.results_dir / f"_{role_name}_logs"
@@ -453,11 +453,19 @@ def role_unhealthy(ctx: Context) -> str | None:
                     process_running = False
 
                 if not process_running:
-                    # Check the last log content — empty = role didn't produce output
-                    content = last_log.read_text(encoding="utf-8").strip()
-                    if not content:
+                    # Check recent logs — a single empty cycle is normal for
+                    # LLM roles (professor, code_evolution) that depend on
+                    # external APIs.  Only flag if ALL of the last 3 completed
+                    # cycle logs are empty, confirming a genuine stall.
+                    stall_lookback = ctx.vars.get("stall_lookback", 3)
+                    recent = logs[-stall_lookback:] if len(logs) >= stall_lookback else logs
+                    all_empty = all(
+                        l.stat().st_size == 0 or not l.read_text(encoding="utf-8").strip()
+                        for l in recent
+                    )
+                    if all_empty:
                         unhealthy.append(
-                            f"{role_name}: stalled {age_min:.0f}min, last log empty")
+                            f"{role_name}: stalled {age_min:.0f}min, last {len(recent)} logs empty")
                     elif age_min > grace_min * 3:
                         # Very stale — something is wrong regardless of content
                         unhealthy.append(
