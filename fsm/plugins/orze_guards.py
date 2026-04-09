@@ -420,14 +420,17 @@ def role_unhealthy(ctx: Context) -> str | None:
 
     # Build per-role grace periods from orze.yaml timeout + cooldown.
     # A role that just timed out won't restart until cooldown elapses,
-    # so grace must be >= (timeout + cooldown) to avoid false positives.
+    # so grace must be >= (timeout + cooldown + overhead) to avoid false
+    # positives.  The +10 min padding accounts for API latency, scheduling
+    # delays, and orze iteration timing (professor regularly has 25-30 min
+    # inter-cycle gaps with timeout=600 + cooldown=600).
     role_grace = {}
     for rn, rc in (cfg.get("roles") or {}).items():
         if not isinstance(rc, dict):
             continue
         timeout_s = rc.get("timeout", 600)
         cooldown_s = rc.get("cooldown", 300)
-        role_grace[rn] = max(base_grace_min, (timeout_s + cooldown_s) / 60 + 5)
+        role_grace[rn] = max(base_grace_min, (timeout_s + cooldown_s) / 60 + 10)
 
     for role_name in monitored:
         log_dir = ctx.results_dir / f"_{role_name}_logs"
@@ -453,11 +456,12 @@ def role_unhealthy(ctx: Context) -> str | None:
                     process_running = False
 
                 if not process_running:
-                    # Check recent logs — a single empty cycle is normal for
-                    # LLM roles (professor, code_evolution) that depend on
-                    # external APIs.  Only flag if ALL of the last 3 completed
-                    # cycle logs are empty, confirming a genuine stall.
-                    stall_lookback = ctx.vars.get("stall_lookback", 3)
+                    # Check recent logs — LLM roles (professor, code_evolution)
+                    # routinely produce empty logs when they have nothing to
+                    # report.  The professor typically has 3 consecutive empty
+                    # cycles between productive ones, so require 6 consecutive
+                    # empties before flagging a genuine stall.
+                    stall_lookback = ctx.vars.get("stall_lookback", 6)
                     recent = logs[-stall_lookback:] if len(logs) >= stall_lookback else logs
                     all_empty = all(
                         l.stat().st_size == 0 or not l.read_text(encoding="utf-8").strip()
