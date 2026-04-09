@@ -474,15 +474,16 @@ def role_unhealthy(ctx: Context) -> str | None:
         all_logs = _sort_cycle_logs(log_dir.glob("cycle_*.log"))
         if len(all_logs) < 2:
             continue
-        # Skip the newest cycle log — it may still be running (log file
-        # created but output not flushed yet).  This also prevents cycles
-        # killed by SIGTERM during graceful shutdown from creating
-        # permanent 0-byte files that inflate the empty-cycle count.
-        logs = all_logs[-6:-1]  # last 5 *completed* cycles (excluding newest)
-        if len(logs) < 3:
+        # Skip the newest cycle log (may still be in-progress, output
+        # not yet flushed).  Use a 7-cycle window with threshold 5 (71%+)
+        # to tolerate intermittent empty cycles from API rate-limits or
+        # transient failures on roles that depend on external services
+        # (e.g. professor uses opus model + web tools).
+        logs = all_logs[-8:-1]  # last 7 completed cycles (excluding newest)
+        if len(logs) < 5:
             continue
         empty_count = sum(1 for l in logs if l.stat().st_size == 0)
-        if empty_count >= 3:
+        if empty_count >= 5:
             # Already flagged above? Skip duplicate
             if not any(role_name in u for u in unhealthy):
                 unhealthy.append(
