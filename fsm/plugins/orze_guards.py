@@ -466,6 +466,8 @@ def role_unhealthy(ctx: Context) -> str | None:
             continue
 
     # --- 3. Consecutive empty logs (role runs but produces nothing) ---
+    ec_window = ctx.vars.get("empty_cycle_window", 15)
+    ec_threshold = ctx.vars.get("empty_cycle_threshold", 12)
     for role_name in monitored:
         log_dir = ctx.results_dir / f"_{role_name}_logs"
         if not log_dir.exists():
@@ -475,15 +477,16 @@ def role_unhealthy(ctx: Context) -> str | None:
         if len(all_logs) < 2:
             continue
         # Skip the newest cycle log (may still be in-progress, output
-        # not yet flushed).  Use a 7-cycle window with threshold 5 (71%+)
-        # to tolerate intermittent empty cycles from API rate-limits or
-        # transient failures on roles that depend on external services
-        # (e.g. professor uses opus model + web tools).
-        logs = all_logs[-8:-1]  # last 7 completed cycles (excluding newest)
-        if len(logs) < 5:
+        # not yet flushed).  Use a wide window (default 15) with high
+        # threshold (default 12, i.e. 80%) to tolerate intermittent empty
+        # cycles from API rate-limits or transient failures on roles that
+        # depend on external services (e.g. professor uses opus + web
+        # tools).  Configurable via FSM vars empty_cycle_window/threshold.
+        logs = all_logs[-(ec_window + 1):-1]  # last N completed (excluding newest)
+        if len(logs) < ec_threshold:
             continue
         empty_count = sum(1 for l in logs if l.stat().st_size == 0)
-        if empty_count >= 5:
+        if empty_count >= ec_threshold:
             # Already flagged above? Skip duplicate
             if not any(role_name in u for u in unhealthy):
                 unhealthy.append(
