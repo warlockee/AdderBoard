@@ -104,12 +104,13 @@ roles:
     cooldown: 600
     timeout: 600
     model: opus
-    allowed_tools: "Read,Write,Edit,Glob,Grep,Bash"
+    allowed_tools: "Read,Write,Edit,Glob,Grep,Bash,WebFetch,WebSearch,ToolSearch"
     pausable: false           # professor reviews even when research is paused
   bug_fixer:
     mode: claude
     triggered_by: fsm
     rules_file: orze-pro/src/orze_pro/prompts/BUG_FIXER_RULES.md
+    cooldown: 3600            # gate deadlock-breaker auto-triggers (FSM script role never modifies ideas.md, so zero-output counter is always high)
     timeout: 600
     model: opus
     allowed_tools: "Read,Write,Edit,Glob,Grep,Bash"
