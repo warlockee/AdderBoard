@@ -528,6 +528,7 @@ def role_unhealthy(ctx: Context) -> str | None:
     if unhealthy:
         ctx.vars["unhealthy_roles"] = unhealthy
         return f"{len(unhealthy)} issue(s): {'; '.join(unhealthy)}"
+    ctx.vars["unhealthy_roles"] = []
     return None
 
 
