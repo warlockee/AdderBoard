@@ -160,6 +160,14 @@ def main():
                     fsm.name, status["state"], status["transitions"])
         fsm.step()
 
+    # Heartbeat: touch ideas.md so orze doesn't count FSM cycles as
+    # "zero output" (the FSM orchestrates other roles, it never writes ideas).
+    # Without this, consecutive_zero_output accumulates and the deadlock
+    # breaker false-triggers the bug_fixer every ~20 minutes after restart.
+    ideas_file = Path("ideas.md")
+    if ideas_file.exists():
+        ideas_file.touch()
+
 
 if __name__ == "__main__":
     main()
