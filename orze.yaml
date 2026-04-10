@@ -120,4 +120,4 @@ roles:
     script: fsm/runner.py
     args: ["--results-dir", "{results_dir}"]
     cooldown: 120
-    timeout: 30
+    timeout: 120
