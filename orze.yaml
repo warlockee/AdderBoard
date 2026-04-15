@@ -102,7 +102,7 @@ roles:
     mode: claude
     rules_file: orze-pro/src/orze_pro/prompts/PROFESSOR_RULES.md
     cooldown: 600
-    timeout: 600
+    timeout: 900
     model: opus
     allowed_tools: "Read,Write,Edit,Glob,Grep,Bash,WebFetch,WebSearch,ToolSearch"
     pausable: false           # professor reviews even when research is paused
@@ -115,6 +115,17 @@ roles:
     model: opus
     allowed_tools: "Read,Write,Edit,Glob,Grep,Bash"
     pausable: false           # bug fixer runs even when research is paused
+  thinker:
+    mode: claude
+    model: claude-opus-4-6
+    rules_file: THINKER_RULES.md
+    allowed_tools: "Read,Write,Edit,Glob,Grep,Bash"
+    timeout: 1800
+    trigger_conditions:
+      plateau_patience: 20
+      failure_cascade: 10
+      periodic_interval: 100
+    min_cooldown: 1800
   fsm:
     mode: script
     script: fsm/runner.py
