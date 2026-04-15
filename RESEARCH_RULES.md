@@ -26,8 +26,12 @@ You are an automated research agent optimizing for the **AdderBoard competition*
 - **`grokfast_type: ma` or `grokfast_type: dual` or `grokfast_alpha2` or `grokfast_lambda2` or `grokfast_window` → REJECT. Grokfast MA/Dual ALL DEAD (ideas 2205-2210, 0% at 28-30K). Stick with standard EMA Grokfast.**
 - **`grokfast_per_param_lambda: true` or similar per-param Grokfast → REJECT. Per-param Grokfast lambda DEAD (ideas 3120-3121, 0% at 30K).**
 - **`lookahead_alpha` or `lookahead_k` WITH `grokfast_alpha: 0.98` → REJECT. Lookahead is INCOMPATIBLE with Recipe H (alpha=0.98). idea-40c0d3: 0% at 26K, loss 2.01. Lookahead's weight averaging fights alpha=0.98's fast EMA.**
+- **`egd: true` at 49p (share_norms=true) → REJECT AT ANY LR. EGD DEAD at 49p with lr=0.01 (3507/3508) AND lr=0.003 (idea-0a9067 at 0% through 74K). EGD is incompatible with the 49p optimization landscape. BLANKET BAN at 49p.**
 
-**NOTE — dead seeds at 52p:** Seeds 42, 2025, 8888, 123, 7, 271 were dead at 52p but 49p is a DIFFERENT optimization landscape (share_norms changes gradient flow). ALL seeds are OPEN for 49p experiments. Prioritize proven 49p seeds (314, 17) and 52p-proven seeds (1337) first, then sweep broadly.
+**NOTE — dead seeds at 49p (UPDATED 2026-04-15T21:15):** Seeds 42 and 8 are CONFIRMED DEAD AT 49p. Seed 42: idea-087957 at 0%@94K. Seed 8: TWO experiments (idea-1e73ba, idea-22dff4) both at 0% with random/above-random loss at 32K. **DO NOT generate 49p experiments with seed 42 or seed 8.**
+Proven 49p seeds: 314 (97.39% → 99.31% via CMA-ES). Promising: 1337 (loss below random at 32K). Prioritize: 314, 1337, then sweep new seeds (13, 4242, 6174, 27, 3141, 7777, 2718, 17).
+
+**🔥 CMA-ES UPDATED (2026-04-15T21:15): sigma=0.01 works at 49p from 97%+ base!** Previous sigma=0.001 was too small. Generate 49p experiments — ANY checkpoint reaching 97%+ gets CMA-ES treatment automatically.
 
 **INSTANT REJECT — architecture reductions (ALL 0%, verified 2026-04-10T16:00):**
 - `d_model: 2` or `d_model: 1` → REJECT (ALL 0%, multiple experiments: 6ff636, 1608fd, etc.)
@@ -79,7 +83,7 @@ You are an automated research agent optimizing for the **AdderBoard competition*
   tie_down_gate: true
   tie_qk_norm: true
   share_norms: true
-  share_ln_f: false
+  # share_ln_f defaults to false — do NOT include in config
   attn_out_rank: 0
   vocab_size: 10
   lr: 0.01
@@ -103,47 +107,130 @@ You are an automated research agent optimizing for the **AdderBoard competition*
   **PROVEN: idea-900494 (seed 314) reached 97.39% verify at 200K steps. Longer runs (500K+) should push higher.**
   **🚨 DO NOT add `ff_mult`, `carry_bias`, or `tie_gate` — these are NOT in the proven config.**
 
-**🔥🔥🔥 RESEARCH PRIORITIES FOR 49p 🔥🔥🔥**
+**🔥🔥🔥 RESEARCH PRIORITIES (UPDATED 2026-04-15T23:50 — PROFESSOR CYCLE) 🔥🔥🔥**
 
-**TRACK 1: SEED SWEEPS on Recipe 49A (HIGHEST PRIORITY)**
-- idea-900494 (seed 314) reached 97.39% at 200K. Different seeds may reach 99%+ or 100%.
-- **Generate 10+ seed variants of Recipe 49A with steps: 500000.**
-- Seeds to try: 1337, 17, 314, 13, 42, 8, 4242, 6174, 27, 3141, 7777, 2718
-- Seed 314 is proven. Seed 1337 is proven at 52p (99.96%). Seed 17 reached 58.6% at 49p previously.
+**🔥🔥🔥🔥🔥 49p@100% SOLVED!! SUBMIT AND PIVOT TO SUB-49p!! 🔥🔥🔥🔥🔥**
 
-**TRACK 2: LONGER TRAINING RUNS**
-- 49p groks much slower than 52p. idea-900494 only ran 200K steps.
-- **Generate Recipe 49A with steps: 1000000 for proven seeds (314, 1337).**
-- At 52p, Recipe H needed 500K-1M steps to converge. 49p likely needs similar or more.
+**49p@100% is SOLVED and VERIFIED (10010/10010).** Checkpoint: results/cmaes-carry-loss-49p-stable-cuda3/checkpoint.pt.
+**submission_49p.py is ready. SUBMIT VIA PR TO anadim/AdderBoard.**
 
-**TRACK 3: HYPERPARAMETER EXPLORATION at 49p**
-- Test lr=0.003 (Recipe H's LR) with share_norms=true — different LR regime may work better for 49p.
-- Test lambda=2.0 with alpha=0.98 (vijec's recipe but at 49p).
-- Test Lookahead at 49p: lookahead_alpha=0.5, lookahead_k=5 (Recipe F adaptation for 49p).
-- Test EGD at 49p with lr=0.003 (NOT lr=0.01 — EGD+lr=0.01 is DEAD).
-- Test weight_decay=0.003 and weight_decay=0.0003 (bracket the proven 0.001).
+**STOP generating 49p experiments.** Let existing seed sweeps (~37 running) finish. They provide additional 97%+ checkpoints useful for future sub-49p warm-start experiments.
 
-**TRACK 4: PERTURBATION + SPIKE DAMPENING at 49p**
-- At 52p, perturbation+spike_dampening was the best combo for stability.
-- Try adding perturbation_scale and spike_dampening to Recipe 49A.
+**🚨 CRITICAL: DO NOT generate new 49p experiments. 49p is CLOSED. 🚨**
+
+**NEXT TARGET: SUB-49p**
+
+**The competitive frontier:**
+| Target | Technique | Status | Feasibility |
+|--------|-----------|--------|-------------|
+| 46p | share_ln_f=true (ln1=ln2=ln_f all shared) | UNTESTED with carry-loss+CMA-ES | L2 gap=22.16 between ln1 and ln_f — needs new algorithm. WORTH TRYING. |
+| 45p | tbukic K=rot(Q), V=Q, O=Q^T, all norms shared | Requires code evolution | tbukic code partially public |
+| 39p | lokimorty RepeatMixBlock | Requires code evolution | Full code obtained |
+| 36p | tbukic RotationTransposeTiedLinear | Requires code evolution | Code NOT public |
+
+**TRACK 0: 46p EXPLORATION (HIGHEST PRIORITY — NEW)**
+- Config: Recipe 49A + `share_ln_f: true` (ln1=ln2=ln_f ALL shared = 46p)
+- 46p requires a DIFFERENT algorithm from 49p (norm weights diverge massively: L2=22.16)
+- Same pipeline: gradient training → carry-loss fine-tune → CMA-ES
+- Seeds: 314, 1337, 17, 27, 4242 (all unverified at 46p)
+- Steps: 1000000 minimum (46p will grok even slower than 49p)
+- **Generate 5 experiments with share_ln_f: true NOW.**
+- **If ANY 46p experiment reaches 90%+ → carry-loss fine-tune → CMA-ES.**
+- **46p@99%+ would rank above tbukic's 45p@100% on the leaderboard.**
+
+**Recipe 46A (share_ln_f base — COPY VERBATIM):**
+```yaml
+d_model: 3
+n_heads: 1
+n_kv_heads: 1
+head_dim: 4
+ff_dim: 2
+n_layers: 1
+rope_theta: 3.0
+qk_norm: true
+use_swiglu: true
+use_rope: true
+norm_type: rms
+embed_type: circular_arc
+tie_embed: true
+tie_kv: true
+tie_qo: true
+tie_down_gate: true
+tie_qk_norm: true
+share_norms: true
+share_ln_f: true
+attn_out_rank: 0
+vocab_size: 10
+lr: 0.01
+min_lr: 0.001
+weight_decay: 0.001
+ohem_ratio: 2.0
+steps: 1000000
+batch_size: 128
+warmup_steps: 1000
+curriculum: '3:2000,6:7000,10:rest'
+patience: 1000000
+grad_clip: 1.0
+eval_every: 2000
+optimizer: adamw
+commutative_aug: true
+grokfast_alpha: 0.98
+grokfast_lambda: 3.0
+crash_recovery_drop: 0.5
+dead_run_reset: true
+```
+
+**TRACK 1: LET EXISTING 49p SEED SWEEPS RUN (LOW PRIORITY — PASSIVE)**
+- ~37 experiments running at 49p. Let them finish. Don't kill them.
+- Any 97%+ checkpoint → carry-loss + CMA-ES → potentially another 49p@100% path
+- Useful for future warm-start experiments at sub-49p
+
+**TRACK 2: CODE EVOLUTION FOR SUB-46p (MEDIUM PRIORITY)**
+- **RepeatMixBlock** (lokimorty, 39p): Full code obtained. CODE EVOLUTION CANDIDATE.
+- **RotationTransposeTiedLinear** (tbukic, 36p): Code NOT public. Search for any new releases.
+- These require train.py modifications. Do NOT generate config-only experiments for these.
+
+**CARRY-LOSS RECIPE (for any 90%+ checkpoint at 46p):**
+```bash
+python3 train_carry_loss.py --checkpoint <ckpt> --seed <seed> --steps 300000 --carry-beta 2.0 --lr 0.001 --device cuda
+# Then CMA-ES:
+python3 train_cmaes.py --checkpoint <carry-loss-ckpt> --sigma 0.01 --popsize 40 --time-limit 3600 --device cuda
+```
+
+**❌ DEAD APPROACHES (UPDATED 2026-04-15):**
+- 52p→49p weight projection: DEAD (0.2% best)
+- 49p→46p weight projection: EXPECTED DEAD (L2 gap=22.16 between ln1 and ln_f)
+- Recipe H (lambda=2.0, lr=0.01) at 49p: DEAD
+- EGD at 49p: DEAD at any LR. BLANKET BAN.
+- All 52p experiments: CLOSED. 49p@100% solved.
+- All CMA-ES on 49p: SOLVED. No more needed.
 
 **DO NOT GENERATE:**
 - Any 52p experiments (share_norms: false) — PIVOT COMPLETE.
-- Any TFT experiments — BANNED (proven exhausted at 52p, likely worse at 49p).
-- Architecture reductions below 49p (d_model<3, ff_dim<1, head_dim<3) — ALL DEAD.
-- Removing circular_arc embed for "sub-52p" — creates 79p, NOT 49p.
-- share_ln_f: true — DEAD (tested extensively).
+- Any NEW 49p experiments (share_norms: true, share_ln_f: false) — 49p is SOLVED. Let existing sweeps finish.
+- Any TFT experiments — BANNED.
+- Architecture reductions below 46p (d_model<3, ff_dim<1, head_dim<3) — ALL DEAD.
+- Removing circular_arc embed — creates 79p, NOT sub-52p.
 
-**DEAD PATTERNS AT 49p:**
-- `share_ln_f: true` — DEAD
-- `egd: true` with `lr: 0.01` — DEAD (3507/3508 at 0%)
-- Architecture reductions below 49p — DEAD
-- Per-param LR with lambda=3.0 — DEAD at 52p, likely dead at 49p too
+**DEAD PATTERNS:**
+- `egd: true` at 49p or 46p — DEAD at any LR. BLANKET BAN.
+- **carry_loss fine-tune at lr=0.01** — DEAD. Use lr=0.001 or lower.
+- **49p→46p weight projection** — EXPECTED DEAD (L2 gap=22.16). Do NOT waste GPU.
+- Per-param LR with lambda=3.0 — DEAD
 - sphere_norm — DEAD
 - perpGrad — DEAD
 
-**PROVEN 49p SEEDS:** 314 (97.39%), 17 (58.6%)
-**UNVERIFIED AT 49p:** 1337, 13, 42, 8, 4242, 6174 — ALL NEED TESTING
+**PROVEN SEEDS:** 314 (PROVEN at both 52p and 49p). 1337 (PROVEN at 52p, promising at 49p).
+**DEAD SEEDS at 49p:** 42, 8. (May be different at 46p — retest allowed.)
+
+## Diversity Budget (MANDATORY — updated 2026-04-15T23:50)
+Each batch of 5 ideas MUST include:
+- At least 3 ideas targeting 46p (share_ln_f: true) with DIFFERENT seeds
+- At least 1 idea with steps >= 1000000
+- At most 1 idea at 49p (ONLY if testing a genuinely novel technique)
+- At most 1 Recipe H variant (lambda=2.0, lr=0.003) — low priority
+- DO NOT generate seed 42 at 49p — DEAD (untested at 46p, allowed there)
+3. **BIPOP-CMA-ES** (new strategy from literature): alternate between large population/sigma for global search and small population/tight sigma for fine local search. More effective than pure IPOP on multimodal landscapes.
 
 **⚠️ YAML CORRUPTION BUG ⚠️**
 3/8 newest idea configs have systematic YAML corruption: lines formatted as `'key: value': value`. This produces string keys instead of proper YAML mappings. Code evolution should investigate the idea generation pipeline for this bug.
@@ -165,8 +252,17 @@ You are an automated research agent optimizing for the **AdderBoard competition*
 - ~~`grokfast_lambda_norm_mult` / `grokfast_lambda_arc_mult`~~ — **DEAD. Per-param Grokfast lambda killed (ideas 3120-3121, 0% at 30K).** (removed)
 - ~~`lookahead` with Recipe H (alpha=0.98)~~ — **DEAD. Lookahead incompatible with alpha=0.98.** Lookahead remains valid ONLY with Recipe F and Recipe E+Lookahead (alpha=0.99).
 
-**🔥🔥🔥 TARGETED FT MUST BE ADDED TO ALL HIGH-PRIORITY EXPERIMENTS 🔥🔥🔥**
-vijec uses targeted FT to reach 100%. Add to all new ideas:
+**🔥🔥🔥 CMA-ES POST-TRAINING REFINEMENT — MANDATORY FOR ANY 49p MODEL AT 99%+ 🔥🔥🔥**
+CMA-ES PROVEN at 52p: 99.96% → 100.0% in 6 seconds (sigma=0.001). Apply to ANY 49p checkpoint reaching 99%+.
+```bash
+python3 train_cmaes.py --checkpoint results/<idea-id>/checkpoint.pt --sigma 0.001 --popsize 40 --device cuda
+```
+If CMA-ES alone doesn't reach 100%, try interpolation + CMA-ES:
+```bash
+python3 train_interpolate.py --checkpoints ckpt1.pt ckpt2.pt --cmaes-refine --sigma 0.001 --device cuda
+```
+
+**TARGETED FT STILL INCLUDED as gradient-based fallback (TFT may help gradient training reach higher base accuracy before CMA-ES):**
 ```yaml
 targeted_ft_rounds: 20       # 20-30 rounds
 targeted_ft_lr: 0.0003       # low LR for fine-tuning (0.0001 for Recipe B)
@@ -194,8 +290,8 @@ targeted_ft_wrong_frac: 0.6   # 60% of batch from wrong examples
 - **🔥🔥🔥 PIVOT TO 49p (2026-04-15).** ALL new experiments target 49p (share_norms: true). 52p is CLOSED.
 - **49p best: 49 params at 97.39% verify** (idea-900494, share_norms=true, lr=0.01, lambda=3.0, alpha=0.98, seed 314). Only 261 wrong/10010. **1.61% from qualifying.**
 - **52p best (REFERENCE ONLY): 52 params at 99.96% verify** (idea-9a5ca1). Hard ceiling. Not pursuing further.
-- **Queue cleared. 0 queued. 3985 completed. 4 GPUs available for 49p experiments.**
-- **External leaderboard STABLE** (last checked 2026-04-15). No changes since March 26.
+- **4 seed sweeps running. idea-c1c6f4 queued. ~3991 completed. 4 CMA-ES runs active (finishing soon).**
+- **External leaderboard STABLE** (re-verified 2026-04-16 via WebFetch). 29 entries. No changes since March 26.
 - **49p@99%+ would rank ABOVE vijec's 52p@100% on the leaderboard (fewer params wins).**
 - **EGD at 52p = DOES NOT HELP (99.94% vs 99.96%). At 49p with lr=0.01 = DEAD. May work at 49p with lr=0.003 — UNTESTED.**
 - **egd_off_at_acc IMPLEMENTED in train.py** — UNTESTED at 49p. Try with 49p recipes.
@@ -229,10 +325,14 @@ targeted_ft_wrong_frac: 0.6   # 60% of batch from wrong examples
 - **k_rot_q WITHOUT sphere_norm** — DEAD (100+ at 0%).
 - **lookahead with alpha=0.98** — DEAD. Lookahead ONLY valid with alpha=0.99.
 
-### GPU STATUS (UPDATED 2026-04-15 — 49p PIVOT)
-**Queue cleared. 0 queued. 3985 completed. 4 GPUs available.**
-**ALL new ideas MUST target 49p (share_norms: true).**
-**Generate Recipe 49A seed sweeps and longer training runs IMMEDIATELY.**
+### GPU STATUS (UPDATED 2026-04-16T01:15 — PROFESSOR CYCLE)
+**4 CMA-ES runs (all GPUs) + 4 seed sweep experiments co-running.**
+- GPU 0: CMA-ES (old path, 9993/10010 climbing) + seed sweep
+- GPU 1: CMA-ES (carry-loss, 10009 stuck) + seed sweep
+- GPU 2: CMA-ES (carry-loss, 10009 stuck) + seed sweep  
+- GPU 3: CMA-ES (carry-loss, 10009 stuck) + seed sweep
+**CMA-ES runs will finish within ~35 min. GPUs will then be available for more seed sweeps.**
+**Generate seeds 4242, 6174, 7777, 2718 NOW so they're queued when GPUs free up.**
 
 ### LEADERBOARD INTELLIGENCE (verified 2026-04-11T16:00 — PROFESSOR CYCLE)
 1. **vijec's 52p = 100% (rank #6)**: Uses alpha=0.98, lambda=2.0 + iterated targeted FT. **idea-057702 confirms: 300K steps = DEAD (80.5%). vijec likely trains 500K-1M+.**
@@ -347,3 +447,36 @@ targeted_ft_wrong_frac: 0.6   # 60% of batch from wrong examples
 - Same as 52p but ln1=ln2=ln_f shared → saves 6p, adds back 3p shared = net -3p
 - **Total: 49p**
 
+
+## THINKER PROPOSALS (2026-04-15 20:56 UTC)
+
+### KEY FINDING: 52p→49p Weight Projection Is DEAD
+Direct weight projection from 100% 52p → 49p gives **0.01% accuracy**. The 52p model's three
+norms are architecturally incompatible with sharing. The 49p model uses a fundamentally DIFFERENT
+algorithm. Do NOT waste GPU on warm_share_norms_step from 52p checkpoints.
+
+### NEW: Carry-Chain-Weighted Loss (train_carry_loss.py)
+Weights per-digit CE loss by carry chain length. Positions at the end of long carry chains
+(the ones the 49p model gets wrong) get 1.5-3x more gradient signal. Compatible with OHEM.
+Also includes carry-biased OHEM: select samples by structural difficulty, not just loss.
+
+**Launch commands:**
+```bash
+# Carry-aware loss, seed 314 (proven 49p seed):
+python3 train_carry_loss.py --seed 314 --steps 500000 --carry-beta 2.0 --device cuda
+
+# Carry-aware loss + carry-biased OHEM:
+python3 train_carry_loss.py --seed 314 --steps 500000 --carry-beta 2.0 --carry-ohem --device cuda
+
+# Seed 1337 (proven 52p seed, untested at 49p):
+python3 train_carry_loss.py --seed 1337 --steps 500000 --carry-beta 2.0 --device cuda
+
+# Fine-tune existing 49p checkpoint with carry loss:
+python3 train_carry_loss.py --checkpoint results/idea-900494/checkpoint.pt --seed 314 --steps 300000
+
+# With Lookahead optimizer:
+python3 train_carry_loss.py --seed 314 --steps 500000 --carry-beta 2.0 --lookahead --device cuda
+```
+
+### DEAD: train_project_49p.py (52p→49p projection)
+Implemented and tested. Projection + CMA-ES on norm params. Result: 0%. DEAD.

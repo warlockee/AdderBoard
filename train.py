@@ -914,9 +914,30 @@ def train_model(cfg, device="cuda"):
         if _ws_path.is_dir():
             _ws_path = _ws_path / "checkpoint.pt"
         warm_start_ckpt = str(_ws_path)
+    # warm_start_merge_norms: when loading a 52p checkpoint into a 49p model (share_norms=true),
+    # average the separate norm weights (ln1, ln2, ln_f) into the single shared norm.
+    # Without this, load_state_dict overwrites the same tensor 3 times and the last key "wins",
+    # losing the information from the other 2 norms. Averaging preserves information from all 3.
+    warm_start_merge_norms = cfg.get("warm_start_merge_norms", False)
     if warm_start_ckpt and Path(warm_start_ckpt).exists():
         _ws_data = torch.load(warm_start_ckpt, map_location=device, weights_only=True)
-        model.load_state_dict(_ws_data["state_dict"])
+        _ws_sd = _ws_data["state_dict"]
+        # Cross-architecture warm start: merge norms when loading 52p→49p
+        if warm_start_merge_norms and share_norms:
+            _ws_ln1_key = "blocks.0.ln1.weight"
+            _ws_ln2_key = "blocks.0.ln2.weight"
+            _ws_lnf_key = "ln_f.weight"
+            _ws_norm_keys = [k for k in [_ws_ln1_key, _ws_ln2_key, _ws_lnf_key] if k in _ws_sd]
+            if len(_ws_norm_keys) >= 2:
+                _ws_norm_tensors = [_ws_sd[k] for k in _ws_norm_keys]
+                # Check if norms are actually different (52p→49p transfer)
+                _ws_norms_differ = not all(torch.equal(_ws_norm_tensors[0], t) for t in _ws_norm_tensors[1:])
+                if _ws_norms_differ:
+                    _ws_avg_norm = torch.stack(_ws_norm_tensors).mean(dim=0)
+                    for k in _ws_norm_keys:
+                        _ws_sd[k] = _ws_avg_norm
+                    print(f"  [warm_start] Merged {len(_ws_norm_keys)} different norm weights → averaged shared norm")
+        model.load_state_dict(_ws_sd, strict=False)
         print(f"  [warm_start] Loaded weights from {warm_start_ckpt}")
 
     # Knowledge Distillation: train with soft labels from a teacher model checkpoint
@@ -1006,8 +1027,10 @@ def train_model(cfg, device="cuda"):
     # Configurable Adam betas: controls momentum (beta1) and second moment (beta2) decay
     # Default (0.9, 0.999) is PyTorch standard. tbukic uses custom betas for grokking.
     # Lower beta2 (e.g., 0.99) makes optimizer more responsive to recent gradients.
-    adam_beta1 = float(cfg.get("adam_beta1", 0.9))
-    adam_beta2 = float(cfg.get("adam_beta2", 0.999))
+    _b1_raw = cfg.get("adam_beta1", 0.9)
+    adam_beta1 = float(_b1_raw) if not isinstance(_b1_raw, bool) else 0.9
+    _b2_raw = cfg.get("adam_beta2", 0.999)
+    adam_beta2 = float(_b2_raw) if not isinstance(_b2_raw, bool) else 0.999
 
     # Adam beta2 scheduling: linearly ramp beta2 from initial to final over training
     # Lower beta2 early (more responsive to recent gradients) → higher late (more stable)
@@ -1042,8 +1065,9 @@ def train_model(cfg, device="cuda"):
     lr_stable_frac = float(cfg.get("lr_stable_frac", 0))  # 0 = standard cosine (default)
 
     def get_lr(step):
+        step = step - _lr_offset  # adjust for training restarts (restart_if_dead)
         if step < warmup_steps:
-            return lr * step / max(warmup_steps, 1)
+            return lr * max(step, 0) / max(warmup_steps, 1)
         t = step - warmup_steps
         total = max(steps - warmup_steps, 1)
         if lr_stable_frac > 0:
@@ -1091,6 +1115,13 @@ def train_model(cfg, device="cuda"):
     # Grokfast: gradient filter to accelerate grokking
     grokfast_alpha = float(cfg.get("grokfast_alpha", 0))
     grokfast_lambda = float(cfg.get("grokfast_lambda", 0))
+
+    # Grokfast alpha warmup: start with lower alpha and linearly ramp to target over N steps.
+    # At 49p, the Grokfast EMA buffer initialized from random early gradients can trap training.
+    # Low alpha early = EMA adapts quickly during the chaotic memorization phase.
+    # High alpha late = EMA accumulates slow-moving generalization signals during grokking.
+    grokfast_alpha_start = float(cfg.get("grokfast_alpha_start", 0))  # 0 = disabled (use grokfast_alpha from start)
+    grokfast_alpha_warmup_steps = int(cfg.get("grokfast_alpha_warmup_steps", 0))  # steps to ramp (0 = disabled)
 
     # Grokfast variant: "ema" (default, exponential moving average) or "ma" (windowed moving average)
     # MA uses a fixed-size window of recent gradients instead of exponential decay.
@@ -1172,6 +1203,21 @@ def train_model(cfg, device="cuda"):
     # ohem_ratio=2.0 means keep top 50% hardest samples (batch_size / ratio)
     ohem_ratio = float(cfg.get("ohem_ratio", 0))  # 0 = disabled (default)
 
+    # OHEM warmup: delay OHEM activation to protect early learning at 49p.
+    # At 49p, OHEM halves effective batch (128→64) when ALL examples have similar loss (model at 0%).
+    # This reduces gradient signal during the critical early memorization phase, preventing grokking onset.
+    # idea-900494 (97.39% at 49p) used NO OHEM. All failing 49p runs use OHEM from step 1.
+    # Delayed OHEM lets the model build basic representations first, then focuses on hard examples.
+    ohem_warmup_steps = int(cfg.get("ohem_warmup_steps", 0))  # 0 = OHEM active from step 1 (default)
+
+    # Accuracy-triggered OHEM intensification: increase OHEM ratio when accuracy crosses threshold.
+    # At high accuracy (e.g., 50%+), most examples are already correct — the model needs
+    # stronger focus on the remaining hard examples to push toward 99%+.
+    # ohem_ratio=2.0 keeps top 50%; intensifying to 4.0 keeps top 25% (harder focus).
+    ohem_intensify_at_acc = float(cfg.get("ohem_intensify_at_acc", 0))  # 0 = disabled; e.g., 0.5
+    ohem_intensify_ratio = float(cfg.get("ohem_intensify_ratio", 4.0))  # new OHEM ratio after threshold
+    _ohem_intensified = False
+
     # Adaptive Weight Decay (tbukic's universal recipe for small models)
     # Milestone-triggered WD decay: WD×wd_decay_factor1 at wd_milestone1% acc, WD×wd_decay_factor2 at wd_milestone2% acc
     # This is how tbukic makes share_norms work — high initial WD for structure, then decay for grokking
@@ -1218,6 +1264,11 @@ def train_model(cfg, device="cuda"):
 
     # Commutative data augmentation: randomly swap a+b → b+a (KA paper, ~2x grokking speedup)
     commutative_aug = cfg.get("commutative_aug", False)
+
+    # Commutative augmentation start step: delay activation to let model learn basic patterns first.
+    # At 49p, augmentation noise during early training can prevent the model from learning digit
+    # representations, especially combined with OHEM. Delay preserves early gradient signal quality.
+    commutative_aug_start_step = int(cfg.get("commutative_aug_start_step", 0))  # 0 = active from start
 
     # Commutative consistency loss: penalize model(a,b) ≠ model(b,a) via cross-entropy on swapped inputs.
     # Exploits mathematical structure of addition (a+b = b+a) to regularize the grokked circuit.
@@ -1288,6 +1339,17 @@ def train_model(cfg, device="cuda"):
     lookahead_k = int(cfg.get("lookahead_k", 0))       # 0 = disabled; 5-10 typical
     lookahead_alpha = float(cfg.get("lookahead_alpha", 0.5))  # interpolation toward fast weights
 
+    # LR spike escape: periodic brief LR jumps to escape grokking plateaus.
+    # At 49p, grokking can stall at local minima where the smooth cosine LR can't escape.
+    # Every lr_spike_period steps, multiply current LR by lr_spike_mult for lr_spike_duration steps.
+    # Different from warm restarts (which reset the entire schedule) — spikes are brief and return to normal.
+    # Only activates after loss drops below lr_spike_loss_threshold (skip early random phase).
+    lr_spike_period = int(cfg.get("lr_spike_period", 0))        # 0 = disabled; 50000 typical
+    lr_spike_mult = float(cfg.get("lr_spike_mult", 3.0))        # multiply current LR during spike
+    lr_spike_duration = int(cfg.get("lr_spike_duration", 1000))  # how long each spike lasts (steps)
+    lr_spike_loss_threshold = float(cfg.get("lr_spike_loss_threshold", 2.0))  # only spike when loss < this
+    _lr_spike_best_loss = float('inf')  # track best loss for spike activation
+
     # Warm norm sharing: train with separate norms (52p), then share mid-training (→46p)
     # At warm_share_norms_step, averages ln1/ln2/ln_f weights and shares them
     warm_share_norms_step = int(cfg.get("warm_share_norms_step", 0))  # 0 = disabled
@@ -1339,6 +1401,41 @@ def train_model(cfg, device="cuda"):
     grokfast_reset_at_acc = float(cfg.get("grokfast_reset_at_acc", 0))  # 0 = disabled; e.g., 0.05
     _grokfast_reset_done = False
 
+    # Dead run optimizer reset: when training is stuck at 0% accuracy with loss near random,
+    # reset optimizer state (Adam momentum/variance) and Grokfast EMA for a fresh start.
+    # At 49p, bad initial optimizer trajectories can trap training at 0% indefinitely.
+    # Resetting the optimizer while KEEPING model weights gives a second chance to find
+    # the grokking trajectory without losing any learned representations.
+    # Optional weight perturbation helps escape the current loss basin.
+    dead_run_reset = cfg.get("dead_run_reset", False)
+    dead_run_check_after = int(cfg.get("dead_run_check_after", 30000))    # only check after N steps
+    dead_run_loss_threshold = float(cfg.get("dead_run_loss_threshold", 2.25))  # loss above this = stuck at random
+    dead_run_perturb_sigma = float(cfg.get("dead_run_perturb_sigma", 0.01))   # weight perturbation after reset
+    dead_run_max_resets = int(cfg.get("dead_run_max_resets", 3))              # max number of resets
+    _dead_run_reset_count = 0
+
+    # Training restart with fresh initialization: when model is completely stuck (0% accuracy,
+    # loss near random after many steps), reinitialize ALL model weights from a different seed
+    # and restart training from scratch (including LR schedule).
+    # Different from dead_run_reset which only clears optimizer state while keeping weights.
+    # At 49p, the grokking basin is extremely narrow — most initializations never reach it.
+    # This converts a single wasted GPU slot into multiple initialization attempts.
+    # Each restart uses seed + restart_number * 100000 for reproducibility.
+    restart_if_dead_after = int(cfg.get("restart_if_dead_after", 0))  # 0 = disabled; 50000 typical for 49p
+    restart_if_dead_max = int(cfg.get("restart_if_dead_max", 3))       # max restarts before giving up
+    restart_if_dead_loss_threshold = float(cfg.get("restart_if_dead_loss_threshold", 2.2))  # loss > this = stuck at random
+    _restart_if_dead_count = 0
+
+    # Seed cycling: when restart_if_dead triggers, cycle through a list of specific seeds instead
+    # of using seed + N*100000. This is more efficient than random offsets because we can use
+    # seeds that are known to be promising or untested at 49p.
+    # Format: comma-separated list of seeds, e.g. "1337,314,17,13,4242,6174,27,3141"
+    # When the list is exhausted, falls back to the default seed + N*100000 behavior.
+    seed_cycle_list_str = cfg.get("seed_cycle_list", "")
+    _seed_cycle_list = []
+    if seed_cycle_list_str:
+        _seed_cycle_list = [int(s.strip()) for s in str(seed_cycle_list_str).split(",") if s.strip()]
+
     # Loss threshold early termination: kill dead experiments based on loss trajectory
     # Format: "step:threshold,step:threshold,..." e.g. "20000:1.5,50000:0.8"
     # At each eval, if step >= checkpoint and loss > threshold, terminate immediately.
@@ -1372,6 +1469,7 @@ def train_model(cfg, device="cuda"):
     best_accuracy = 0.0
     best_state = None
     steps_since_improvement = 0
+    _lr_offset = 0  # LR schedule offset for restart_if_dead (resets cosine schedule)
     last_ift_step = 0  # track last interleaved FT step
     ckpt_avg_pool = []  # (accuracy, state_dict) pairs for checkpoint averaging
     lawa_pool = []  # state_dicts for LAWA (latest K checkpoints)
@@ -1503,6 +1601,12 @@ def train_model(cfg, device="cuda"):
             else:
                 current_lr = min_lr  # after restart period, settle at min_lr
 
+        # LR spike escape: brief LR jumps to escape grokking plateaus
+        if lr_spike_period > 0 and _lr_spike_best_loss < lr_spike_loss_threshold:
+            _spike_phase = (step - _lr_offset) % lr_spike_period
+            if _spike_phase < lr_spike_duration:
+                current_lr = current_lr * lr_spike_mult
+
         for pg in optimizer.param_groups:
             if use_param_groups and "lr_mult" in pg:
                 pg["lr"] = current_lr * pg["lr_mult"]
@@ -1573,7 +1677,7 @@ def train_model(cfg, device="cuda"):
             prompts, targets = generate_batch(batch_size, max_digits=max_digits, device=device)
 
         # Commutative augmentation: randomly swap a+b → b+a for 50% of samples
-        if commutative_aug:
+        if commutative_aug and (commutative_aug_start_step <= 0 or step >= commutative_aug_start_step):
             swap_mask = torch.rand(prompts.shape[0], device=prompts.device) < 0.5
             if swap_mask.any():
                 # prompts format: [0] + a_digits(10) + [0,0] + b_digits(10) + [0]
@@ -1611,7 +1715,8 @@ def train_model(cfg, device="cuda"):
             targets_all = targets
 
         # OHEM: select hardest samples before loss computation
-        if ohem_ratio > 0:
+        # Delayed by ohem_warmup_steps to protect early learning at 49p
+        if ohem_ratio > 0 and (ohem_warmup_steps <= 0 or step >= ohem_warmup_steps):
             with torch.no_grad():
                 per_sample_loss = F.cross_entropy(
                     output_logits.reshape(-1, VOCAB_SIZE),
@@ -1827,11 +1932,16 @@ def train_model(cfg, device="cuda"):
                             p.grad.add_(ma, alpha=eff_lambda * getattr(p, '_gf_lambda_mult', 1.0))
             else:
                 # Grokfast EMA (default)
+                # Compute effective alpha with optional warmup (ramp from start to target)
+                _eff_alpha = grokfast_alpha
+                if grokfast_alpha_start > 0 and grokfast_alpha_warmup_steps > 0 and step <= grokfast_alpha_warmup_steps:
+                    _alpha_progress = step / grokfast_alpha_warmup_steps
+                    _eff_alpha = grokfast_alpha_start + (grokfast_alpha - grokfast_alpha_start) * _alpha_progress
                 for p in model.parameters():
                     if p.grad is not None:
                         if not hasattr(p, '_grokfast_ema'):
                             p._grokfast_ema = torch.zeros_like(p.grad)
-                        p._grokfast_ema.mul_(grokfast_alpha).add_(p.grad, alpha=1 - grokfast_alpha)
+                        p._grokfast_ema.mul_(_eff_alpha).add_(p.grad, alpha=1 - _eff_alpha)
                         p.grad.add_(p._grokfast_ema, alpha=eff_lambda * getattr(p, '_gf_lambda_mult', 1.0))
 
             # Dual Grokfast: second EMA at different time scale (multi-resolution filtering)
@@ -1947,6 +2057,9 @@ def train_model(cfg, device="cuda"):
             if lambda_acc_scale:
                 _lambda_acc_smoothed = 0.95 * _lambda_acc_smoothed + 0.05 * full_acc
 
+            # LR spike escape: track best loss for spike activation
+            _lr_spike_best_loss = min(_lr_spike_best_loss, loss.item())
+
             if full_acc > best_accuracy:
                 best_accuracy = full_acc
                 best_state = {k: v.clone() for k, v in model.state_dict().items()}
@@ -1970,6 +2083,14 @@ def train_model(cfg, device="cuda"):
                 _old_lambda = grokfast_lambda
                 grokfast_lambda = lambda_adjust_to
                 print(f"  [lambda_adjust] Acc {full_acc:.4f} >= {lambda_adjust_at_acc}, lambda {_old_lambda} -> {lambda_adjust_to}")
+
+            # OHEM intensification: increase ratio when accuracy reaches threshold
+            if ohem_intensify_at_acc > 0 and full_acc >= ohem_intensify_at_acc and not _ohem_intensified:
+                _ohem_intensified = True
+                _old_ohem = ohem_ratio
+                ohem_ratio = ohem_intensify_ratio
+                print(f"  [ohem_intensify] Acc {full_acc:.4f} >= {ohem_intensify_at_acc}, "
+                      f"OHEM ratio {_old_ohem} -> {ohem_intensify_ratio}")
 
             # Crash Recovery: revert to best checkpoint if accuracy drops significantly
             # Prevents catastrophic collapse (e.g., GrokTransfer peak 97.4% → crash to 0%)
@@ -2180,6 +2301,87 @@ def train_model(cfg, device="cuda"):
             if max_digits >= NUM_DIGITS and steps_since_improvement >= patience and 0 < best_accuracy < 0.99:
                 print(f"No improvement for {patience} steps, stopping.")
                 break
+
+            # Dead run optimizer reset: when stuck at 0% with high loss, reset optimizer for fresh start
+            # Keeps model weights (which may have useful structure) but clears optimizer momentum
+            if (dead_run_reset and step >= dead_run_check_after and
+                    best_accuracy == 0.0 and full_acc == 0.0 and
+                    loss.item() > dead_run_loss_threshold and
+                    _dead_run_reset_count < dead_run_max_resets):
+                _dead_run_reset_count += 1
+                print(f"  [dead_run_reset] Loss {loss.item():.4f} > {dead_run_loss_threshold} at step {step} "
+                      f"with 0% accuracy. Resetting optimizer. ({_dead_run_reset_count}/{dead_run_max_resets})")
+                # Reset optimizer state (clear Adam momentum/variance)
+                for _dr_state in optimizer.state.values():
+                    _dr_state.clear()
+                # Reset Grokfast EMA buffers
+                for _dr_p in model.parameters():
+                    for _gf_attr in ('_grokfast_ema', '_grokfast_ema2', '_grokfast_ma_buf'):
+                        if hasattr(_dr_p, _gf_attr):
+                            delattr(_dr_p, _gf_attr)
+                # Reset lookahead slow weights
+                if lookahead_k > 0 and lookahead_slow is not None:
+                    lookahead_slow = {n: p.data.clone() for n, p in model.named_parameters()}
+                # Optional weight perturbation to escape current basin
+                if dead_run_perturb_sigma > 0:
+                    with torch.no_grad():
+                        for _dr_p in model.parameters():
+                            _dr_scale = dead_run_perturb_sigma * (_dr_p.data.std() + 1e-8)
+                            _dr_p.data.add_(torch.randn_like(_dr_p) * _dr_scale)
+                steps_since_improvement = 0
+
+            # Training restart: reinitialize model with entirely fresh weights from a new seed.
+            # Triggered when stuck at 0% accuracy with loss near random for too long.
+            # Unlike dead_run_reset (optimizer-only), this creates NEW weights for a fresh attempt.
+            if (restart_if_dead_after > 0 and
+                    (step - _lr_offset) >= restart_if_dead_after and
+                    best_accuracy == 0.0 and full_acc == 0.0 and
+                    loss.item() > restart_if_dead_loss_threshold and
+                    _restart_if_dead_count < restart_if_dead_max):
+                _restart_if_dead_count += 1
+                # Seed cycling: use next seed from cycle list if available
+                if _seed_cycle_list and _restart_if_dead_count <= len(_seed_cycle_list):
+                    _new_seed = _seed_cycle_list[_restart_if_dead_count - 1]
+                else:
+                    _new_seed = seed + _restart_if_dead_count * 100000
+                print(f"  [restart_if_dead] Stuck at 0% after {step - _lr_offset} steps (loss={loss.item():.4f}). "
+                      f"Reinitializing with seed {_new_seed}. ({_restart_if_dead_count}/{restart_if_dead_max})")
+                torch.manual_seed(_new_seed)
+                if torch.cuda.is_available():
+                    torch.cuda.manual_seed_all(_new_seed)
+                random.seed(_new_seed)
+                # Create fresh model with new initialization
+                _fresh_model = AdderTransformer(cfg).to(device)
+                model.load_state_dict(_fresh_model.state_dict())
+                del _fresh_model
+                # Re-apply custom init if configured
+                if custom_init:
+                    with torch.no_grad():
+                        for _ri_name, _ri_p in model.named_parameters():
+                            if "q_proj" in _ri_name or "k_proj" in _ri_name:
+                                _ri_p.data.copy_(torch.zeros_like(_ri_p).cauchy_().sign() *
+                                                 torch.empty_like(_ri_p).exponential_(1.0 / float(cfg.get("init_q_scale", 3.0))))
+                            elif any(k in _ri_name for k in ("ln1", "ln2", "ln_f", "q_norm", "k_norm")):
+                                _ri_p.data.uniform_(float(cfg.get("init_norm_lo", -10.0)), float(cfg.get("init_norm_hi", 15.0)))
+                # Reset LR schedule to start fresh from this point
+                _lr_offset = step
+                # Reset optimizer state
+                for _ri_state in optimizer.state.values():
+                    _ri_state.clear()
+                # Reset Grokfast EMA buffers
+                for _ri_p in model.parameters():
+                    for _gf_attr in ('_grokfast_ema', '_grokfast_ema2', '_grokfast_ma_buf'):
+                        if hasattr(_ri_p, _gf_attr):
+                            delattr(_ri_p, _gf_attr)
+                # Reset lookahead slow weights
+                if lookahead_k > 0:
+                    lookahead_slow = {n: p.data.clone() for n, p in model.named_parameters()}
+                # Reset tracking
+                best_accuracy = 0.0
+                best_state = None
+                steps_since_improvement = 0
+                _dead_run_reset_count = 0  # reset dead_run counter for new init
+                model.train()
 
             # Divergence stop: model collapsed to 0 accuracy and hasn't recovered
             if max_digits >= NUM_DIGITS and full_acc == 0.0 and steps_since_improvement >= 100_000:
@@ -3157,64 +3359,15 @@ def load_idea_from_sqlite(idea_id: str) -> dict:
 
 
 def _config_keys():
-    """All valid YAML config keys (for --help introspection by orze SOP)."""
-    return [
-        "adam_beta1", "adam_beta2", "adam_beta2_final", "adaptive_wd",
-        "attn_out_rank", "batch_size", "batch_size_start", "batch_size_warmup_steps",
-        "carry_bias", "carry_bias_schedule", "ckpt_avg_k", "ckpt_interpolation_steps",
-        "commutative_aug", "commutative_eval", "commutative_loss_weight",
-        "cosine_wd", "crash_recovery_drop", "crash_recovery_max", "curriculum",
-        "custom_init", "d_model", "digit_loss_scale", "digit_loss_weight",
-        "distill_alpha", "distill_teacher_ckpt", "distill_temperature",
-        "down_rot_up_t", "egd", "egd_before_grokfast", "egd_off_at_acc",
-        "egd_warmup_steps", "ema_decay", "ema_start_step", "embed_type",
-        "eval_every", "ff_dim", "ff_mult", "focal_gamma", "gate_alpha_up",
-        "grad_accum_steps", "grad_centralize", "grad_clip", "grad_clip_final",
-        "grad_noise_eta", "grad_noise_gamma", "grok_transfer_digits",
-        "grok_transfer_phases", "grok_transfer_steps", "grokfast_alpha",
-        "grokfast_alpha2", "grokfast_decay_start", "grokfast_lambda",
-        "grokfast_lambda2", "grokfast_lambda_arc_mult", "grokfast_lambda_cycle_period",
-        "grokfast_lambda_min", "grokfast_lambda_norm_mult", "grokfast_reset_at_acc",
-        "grokfast_spike_cooldown", "grokfast_spike_dampening", "grokfast_spike_scale",
-        "grokfast_spike_threshold", "grokfast_type", "grokfast_window",
-        "head_dim", "init_norm_hi", "init_norm_lo", "init_q_scale",
-        "interleaved_ft_acc", "interleaved_ft_every", "interleaved_ft_lr",
-        "interleaved_ft_steps", "k_alpha_q", "k_rot_q", "label_smoothing",
-        "lambda_acc_min", "lambda_acc_scale", "lambda_adjust_at_acc",
-        "lambda_adjust_to", "lambda_warmup_steps", "lawa_k", "lawa_start_acc",
-        "lion_beta1", "lion_beta2", "lookahead_alpha", "lookahead_k",
-        "loss_threshold_schedule", "lr", "lr_arc_mult", "lr_norm_mult",
-        "lr_restart_at_acc", "lr_restart_mult", "lr_restart_period",
-        "lr_restart_steps", "lr_restart_to", "lr_stable_frac", "lr_up_mult",
-        "majority_vote_n", "min_lr", "min_wd", "muon_momentum", "muon_nesterov",
-        "muon_ns_steps", "n_heads", "n_kv_heads", "n_layers", "norm_type",
-        "o_tail_scale", "ohem_ratio", "optim_reset_at_acc", "optimizer",
-        "patience", "pe_type", "perp_grad", "perturbation_search_fisher",
-        "perturbation_search_fisher_samples", "perturbation_search_min_acc",
-        "perturbation_search_n", "perturbation_search_restarts",
-        "perturbation_search_sigma", "qk_norm", "qk_norm_type", "repeat_mix",
-        "rope_period", "rope_theta", "sam_rho", "seed", "share_ln_f",
-        "share_norms", "sphere_norm", "sphere_norm_unembed", "sphere_tau",
-        "sphere_tau_final", "steps", "swa_start_frac", "swa_update_freq",
-        "targeted_ft_attempts", "targeted_ft_carry_bias", "targeted_ft_ema_decay",
-        "targeted_ft_ewc_lambda", "targeted_ft_ewc_samples",
-        "targeted_ft_freeze_layers", "targeted_ft_grad_surgery",
-        "targeted_ft_grokfast", "targeted_ft_jitter_sigma",
-        "targeted_ft_lookahead_alpha", "targeted_ft_lookahead_k", "targeted_ft_lr",
-        "targeted_ft_lr_arc_mult", "targeted_ft_lr_attn_mult",
-        "targeted_ft_lr_decay", "targeted_ft_lr_norm_mult", "targeted_ft_lr_up_mult",
-        "targeted_ft_mixback", "targeted_ft_ohem_ratio", "targeted_ft_rounds",
-        "targeted_ft_search_growth", "targeted_ft_search_size", "targeted_ft_steps",
-        "targeted_ft_wd", "targeted_ft_wrong_frac", "targeted_ft_wrong_frac_final",
-        "tie_down_gate", "tie_embed", "tie_gate", "tie_kv", "tie_qk",
-        "tie_qk_norm", "tie_qo", "time_limit", "train_temperature",
-        "train_temperature_final", "use_rope", "use_swiglu", "v_eq_q",
-        "vocab_size", "warm_share_norms_step", "warm_start_ckpt", "warmup_steps",
-        "wd_arc_mult", "wd_decay_factor1", "wd_decay_factor2", "wd_high_mult",
-        "wd_high_phase_steps", "wd_milestone1", "wd_milestone2", "wd_norm_mult",
-        "wd_up_mult", "weight_decay", "weight_noise_start", "weight_noise_std",
-        "z_loss_weight",
-    ]
+    """Auto-extract all valid YAML config keys from this file's cfg.get() calls.
+
+    This ensures the argparse --help output always matches the actual config keys,
+    even when the thinker or code_evolution adds new ones.
+    """
+    import re as _re
+    src = Path(__file__).read_text(encoding="utf-8")
+    keys = sorted(set(_re.findall(r'cfg\.get\("([a-zA-Z_][a-zA-Z0-9_]*)"', src)))
+    return keys
 
 
 def main():

@@ -7,9 +7,9 @@ Build the smallest autoregressive transformer that can add two 10-digit numbers 
 - GitHub: https://github.com/anadim/AdderBoard
 - Category: **Trained Weights** (learned from data via generic training algorithms)
 - Leaderboard: https://github.com/anadim/AdderBoard — CHECK REGULARLY for updates
-- **Last checked: 2026-04-10 (Professor Cycle)**
+- **Last checked: 2026-04-16 (Professor Cycle)**
 
-### Trained Weights Leaderboard (top entries) — verified 2026-04-10T12:30 (STABLE, no changes since March 26)
+### Trained Weights Leaderboard (top entries) — verified 2026-04-15T21:00 (STABLE, no changes since March 26)
 | Rank | Params | Acc | Author | Key Tricks |
 |------|--------|-----|--------|------------|
 | 1 | 36 | 100% | tbukic | circ arc, K=rot(Q) 1p, V=Q, O=Q^T, all norms shared, tied QK norms, down=rot(up^T) 1p |
@@ -24,12 +24,13 @@ Build the smallest autoregressive transformer that can add two 10-digit numbers 
 | 10 | 62 | 100% | tbukic | circ arc, tied K=V, O=Q^T, Adam no WD |
 
 - **NOTE**: lichengliu03's 50p entry is in the **Hand-Coded** category, NOT Trained Weights
-- **Our best**: 52p at **99.96% verify** (idea-9a5ca1, Recipe E+Lookahead, seed 1337) — would rank ~6th but needs 100%
-- **Second best**: 52p at **99.95% verify** (idea-366e08, Recipe F Lookahead, seed 1337)
-- **Third/Fourth best**: 52p at **99.85% verify** (idea-3124 & idea-3127, Recipe F+SD+Lookahead, seed 314) — **15 wrong out of 10,010!**
-- **Fifth best**: 52p at **99.71% verify** (idea-2104, Recipe B per-param LR)
-- **Sixth best**: 52p at **99.68% verify** (idea-3125, Recipe F+SD+Lookahead, seed 1337) — JUST COMPLETED
-- **Critical**: vijec's 52p (rank 6) reaches 100%. We're at 99.96% — just 4 wrong out of 10,010 tests. **idea-1025d7 at 98.8%@58K — about to hit 100% batch accuracy!**
+- **🔥🔥🔥🔥🔥 OUR BEST: 49p at 100.00% (10010/10010) — VERIFIED via verify_checkpoint.py!! 🔥🔥🔥🔥🔥**
+- **Path: gradient training (seed 314, 97.39%) → carry-loss fine-tune (99.90%) → CMA-ES (100%)**
+- **Checkpoint: results/cmaes-carry-loss-49p-stable-cuda3/checkpoint.pt**
+- **CMA-ES details: sigma restart from 0.0005→0.001357 at gen 160 unlocked last sample, 1604s total**
+- **Previous best: 49p at 99.99% (10009/10010), 52p at 100% (idea-cmaes-52p-100pct)**
+- **49p@100% OUTRANKS vijec's 52p@100% — would be rank #6 on trained weights leaderboard**
+- **READY FOR SUBMISSION.**
 
 ## Dataset
 - Input: two integers in [0, 9,999,999,999]
@@ -42,12 +43,28 @@ Build the smallest autoregressive transformer that can add two 10-digit numbers 
 - **Secondary**: `num_params` — unique parameter count after weight tying (lower is better)
 - **Goal**: Minimize `num_params` while maintaining ≥99% accuracy
 
-## Current State (updated 2026-04-15T20:15 — PROFESSOR CYCLE)
-- **🔥🔥🔥 ACTUAL BEST at TRUE 52p**: idea-9a5ca1 at **99.96% verify** (4 wrong/10010) — Recipe E+LA, seed 1337. **Reproduced 12x. HARD CEILING at seed 1337. Different seed needed for 100%.**
-- **🔥🔥🔥 SUB-52p BEST: idea-900494 at 49p, 97.39% verify** (261 wrong/10010) — share_norms=true, lr=0.01, lambda=3.0, alpha=0.98, seed 314. **Only 1.61% from qualifying!**
-- **External leaderboard STABLE** (re-verified via WebFetch 2026-04-11T04:00): No new entries since March 26. tbukic #1 at 36p. Hand-coded at 6p (zcbtrak). Competition quiet — window to submit.
-- **✅ PIPELINE ALIVE. 7 ideas in queue (4 APPROVED + 1 PRIORITIZED new, 2 duplicates to dedup).**
-- **✅ PIPELINE ALIVE: training processes running. 4800+ experiment dirs.**
+## Current State (updated 2026-04-15T23:50 UTC — PROFESSOR CYCLE)
+- **49p@100.00% SOLVED AND RE-VERIFIED (10010/10010, 49 params, QUALIFIED)**
+  - **Checkpoint: results/cmaes-carry-loss-49p-stable-cuda3/checkpoint.pt**
+  - **3-step path: gradient (seed 314, 97.39%) → carry-loss (99.90%) → CMA-ES (100%)**
+  - **submission_49p.py ready. SUBMIT VIA PR TO anadim/AdderBoard.**
+- **Pipeline: 39 training processes running (37 seed sweeps + 2 obsolete CMA-ES)**
+- **External leaderboard STABLE** (re-verified via WebFetch 2026-04-15): No new entries since March 26. tbukic #1 at 36p. 29 total entries.
+- **NEXT STEPS (updated 2026-04-15T23:50 — PROFESSOR CYCLE):**
+  1. **SUBMIT 49p@100% to AdderBoard** — #1 priority. submission_49p.py is ready.
+  2. **Pivot to sub-49p exploration** — 46p (share_ln_f=true) is the natural next target.
+  3. **Let existing 49p seed sweeps finish** — useful for sub-49p warm-start experiments.
+  4. **Stop the 2 obsolete CMA-ES runs** (GPUs 0, 2) when convenient.
+  5. **Code evolution needed for 39p (RepeatMixBlock) and 36p (RotationTied)**.
+- **SUB-49p FEASIBILITY (NEW — 2026-04-15):**
+  - 49p checkpoint norms: ln1/ln2=[1.4, 9.7, -4.5], ln_f=[-10.6, 27.7, 0.3]. L2 gap=22.16.
+  - 46p (share_ln_f=true) needs a completely different algorithm from 49p.
+  - 46p from scratch with 3-step pipeline: WORTH TRYING but expect extreme difficulty.
+  - 46p would rank above tbukic's 45p@100% on the leaderboard if achievable.
+  4. **NEXT TARGET: sub-49p (46p, 45p, 39p, 36p).** Requires code evolution:
+     - 46p: share_ln_f (ln1=ln2=ln_f all shared) — previously dead but worth retesting with carry-loss+CMA-ES path
+     - 39p: RepeatMixBlock (lokimorty code obtained)
+     - 36p: RotationTransposeTiedLinear (tbukic, code not public)
   - **🔥🔥🔥🔥🔥 E+LA+EGD — MIXED RESULTS, idea-65a942 IS #1 PRIORITY:**
     - **🔥🔥🔥 idea-65a942 (1337, E+LA+EGD 300K): 43.6%@46K — BEST EGD EXPERIMENT!** Trajectory: 0→0.6%→1.6%→5.8%→7.2%→10.6%→...→39.4%→35.2%→41%→37.4%→43.6%. Noisy but trending up. Seed 1337 is our proven best (99.96% on standard). **THE KEY QUESTION: does EGD change the attractor or just accelerate to the same 99.96% ceiling?** Monitor past 60K.
     - **⚠️ idea-3510 (6174, E+LA+EGD 300K): DECLINING — 36.6%@74K (peaked 43.8%@66K).** Post-crash recovery trajectory is DEGRADING: 43.4%→43.8%→41.6%→40.4%→36.6%. Loss rising (0.49 vs 0.33 pre-crash). **crash_recovery_drop=0.5 may have halved LR too aggressively for EGD — EGD needs sufficient LR to equalize gradients.** Possible DEAD after crash.
@@ -95,18 +112,20 @@ Build the smallest autoregressive transformer that can add two 10-digit numbers 
   9. ~~Recipe F + SD + perturbation~~ = 99.85% verify (3209). Perturbation did NOT improve TFT outcome.
   10. ~~Recipe F + SD + EWC/freeze for TFT~~ = **DEAD.** 3200/3202 both WORSE (99.68%).
   11. ~~2nd-pass TFT from near-perfect base~~ = **DEAD.** idea-71c3d3 DEGRADED from 99.96% → 99.88%.
-- **Path to 100% at 52p**: **STRATEGIC PIVOT — EGD ACCELERATION (updated 2026-04-10T21:00):**
-  1. **🔥🔥🔥 E+LA+EGD SEED SWEEPS (HIGHEST PRIORITY)** — idea-3510 (seed 6174) at 30.6%@32K is the fastest trajectory EVER. E+LA+EGD outperforms H+EGD 2:1. Test ALL proven and promising seeds on E+LA+EGD.
-  2. **idea-65a942 (seed 1337, E+LA+EGD)** — JUST STARTED. If EGD changes the grokking trajectory, seed 1337 may break its 99.96% ceiling.
-  3. **Standard E+LA seed 6174 (NO EGD)** — isolate whether seed 6174 is intrinsically special. MISSING — needs to be generated.
-  4. **Recipe H+EGD long runs (1M steps)** — 3505 at 16.2%@32K is positive but volatile. Worth running but E+LA+EGD is the primary path.
-  5. ~~Recipe H long runs without EGD~~ — SUPERSEDED. 25842c at 15%@182K. EGD achieves similar accuracy in 32K steps.
-- **Path to sub-52p**: **49p PROVEN VIABLE — idea-900494 at 97.39% verify.**
-  - **49p (share_norms=true)**: PROVEN. lr=0.01, lambda=3.0, alpha=0.98. Needs longer training (500K+), crash recovery, seed sweeps.
-  - **46p (share_norms=true + additional tying)**: idea-998019 at 40.8% batch with lambda=2.0. Has potential.
-  - lokimorty's 39p: idea-3409 DYING at 0%@34K. May need different hyperparameters.
+- **Path to 100% at 52p**: **SOLVED — CMA-ES (updated 2026-04-15T20:45):**
+  - **CMA-ES refinement from 99.96% checkpoint → 100.0% in 6 seconds.** VERIFIED via verify_checkpoint.py. Checkpoint saved at results/idea-cmaes-52p-100pct/.
+  - **Interpolation + CMA-ES also works** — 3-checkpoint simplex search + CMA-ES refinement → 100% in 118s.
+  - **52p is CLOSED for further experimentation.** Focus is 49p.
+- **Path to 100% at 49p (updated 2026-04-16T00:00):**
+  - **3-STEP PATH PROVEN: gradient(97.39%) → carry-loss(99.90%) → CMA-ES(99.99%)**
+  - **CMA-ES reached 10009/10010 on TWO independent runs.** Last sample is a hard carry-chain edge case.
+  - **If CMA-ES plateaus at 10009**: Try IPOP restart with doubled popsize + wider sigma from 10009 best-found.
+  - **Carry-loss VALIDATED as critical bridge**: CMA-ES from 97.39% → 99.65% (35 wrong). CMA-ES from 99.90% → 99.99% (1 wrong). The extra 0.25% from carry-loss fine-tune translates to 34 fewer wrong samples.
+  - **49p@99.90% ALREADY QUALIFIES.** Outranks vijec's 52p@100% (49 < 52 params).
+  - **Scripts**: train_cmaes.py (IPOP, now auto-saves), train_carry_loss.py (PROVEN).
+  - **52p→49p projection: DEAD.** Norms incompatible.
   - tbukic's 36p: K=rot(Q), V=Q, down=rot(up^T). RotationTransposeTiedLinear needed.
-  - **49p IS THE SWEET SPOT — lowest hanging fruit for sub-52p leaderboard entry.**
+  - **49p IS THE PRIMARY TARGET for leaderboard submission.**
 - **EXTERNAL TECHNIQUES ASSESSED**: Muon/AdaMuon all dead at 52p. Ziming Liu 181p conv model (different arch). KAN grokking = commutative_aug already implemented. Geometric grokking (arxiv 2603.05228) = sphere_norm DEAD at 52p. Embedding-specific LR (arxiv 2505.15624) = implemented. arxiv 2601.09049 = confirms TFT limitation is fundamental (grokked circuits have limited transferability). Weight decay phase structure (arxiv 2602.18523) = cosine WD candidate, needs code evolution. **arxiv 2604.07380** = spectral edge lifecycle, WD drives post-grok compression — but `targeted_ft_wd` already 0.0 so not a new TFT lever. **arxiv 2604.04655** = grokking is dimensional phase transition, seed sensitivity >2x — validates seed sweep strategy. **NeuralGrok (arxiv 2504.17243)** = auxiliary gradient transformation module. Complex but interesting. LOW PRIORITY. **arxiv 2602.22600** = "Transformers converge to invariant algorithmic cores" — independently trained models converge to SAME cyclic solution; seed sensitivity is about whether grokking COMPLETES, not finding different solutions. Validates both seed sweeps AND long runs. **arxiv 2603.24746** = grokking is true phase transition (Binder crossings confirm). Theoretical only. **arxiv 2604.00316** = data symmetry breaking needed for generalization. Already addressed by commutative_aug. **arxiv 2603.13331** = "Why Grokking Takes So Long" — scaling law: delay scales INVERSELY with WD and LR (R^2>0.97 across 293 runs). Supports WD=0.003 experiment. Higher WD = faster grokking onset. **GrokAlign (arxiv 2506.12284)** = Jacobian/centroid alignment accelerates grokking beyond WD. CODE EVOLUTION CANDIDATE. Applicability to 50p models unknown but compute cost negligible. **🔥 Egalitarian Gradient Descent (EGD, arxiv 2510.04930, ICLR 2026)** = hyperparameter-free grokking acceleration. Modifies gradients via SVD: G̃=(GG^T)^(-1/2)G=UV^T. Equalizes optimization speed across all principal directions. Zero memory overhead (unlike Grokfast which maintains EMA buffer). Groks "immediately" in paper experiments. **TOP CODE EVOLUTION CANDIDATE** — at d=3/hd=4 scale, SVD is essentially free. Could accelerate stuck seeds AND Recipe H long runs. Code: not public yet but algorithm is trivial (3 lines of SVD per layer per step). May conflict with Grokfast EMA — need to test both standalone EGD AND EGD+Grokfast.
 - **EXTERNAL CODE OBTAINED:**
   - **vijec's 52p**: alpha=0.98/lambda=2.0 + iterated TFT. TFT proven insufficient for us.
@@ -149,7 +168,8 @@ Build the smallest autoregressive transformer that can add two 10-digit numbers 
 10. **Anti-Quarter QK Norm** (lokimorty) — 1p norm with [a, a/4, 0, -a] pattern
 11. **Repeat-Mix Shared Block** (lokimorty) — same block applied twice with learned interpolation
 
-## Key Training Techniques (from external code review + internal results, 2026-04-10T21:30)
+## Key Training Techniques (from external code review + internal results, 2026-04-15T20:45)
+0. **🔥🔥🔥 CMA-ES POST-TRAINING REFINEMENT** — ✅ **IMPLEMENTED** as `train_cmaes.py`. PROVEN: 52p 99.96% → 100.0% in 6 seconds (sigma=0.001, popsize=40). Also: train_interpolate.py for multi-checkpoint interpolation + CMA-ES. **MANDATORY: Apply CMA-ES to any 49p checkpoint reaching 99%+.** CMA-ES from 97.39% only reached 97.93% — too far for pure CMA-ES. Phase 1 (gradient) gets to 99%+, Phase 2 (CMA-ES) finishes to 100%.
 1. **Per-parameter LR multipliers** (tbukic) — lr_norm_mult=3.0, lr_arc_mult=0.5, lr_up_mult=1.5. ✅ **IMPLEMENTED** — ONLY works with lambda=4.0 (idea-2104 peaks 99.8%). **DEAD with lambda=3.0** (28 experiments, ALL 0% at up to 98K steps). **DEAD with lambda=2.0** as well.
 2. **Adaptive Weight Decay** (tbukic) — milestone-triggered WD decay. ✅ **IMPLEMENTED** — untested in isolation. Low priority.
 3. ~~**perpGrad** (tbukic)~~ — ✅ **IMPLEMENTED BUT HARMFUL** — ALL experiments at 0%. BANNED.

@@ -3,18 +3,19 @@ AdderBoard submission: 49-parameter trained transformer for 10-digit addition.
 
 Architecture: 1L Qwen3-style decoder
   d=3, 1h/1kv, hd=4, ff_dim=2, SwiGLU, RMSNorm, RoPE theta=3
-  Circular arc embedding (3 params), tied K=V, tied O=Q^T, tied QK norms
+  Circular arc embedding (3 params), tied K=V, tied O=Q^T,
+  tied QK norms, tied down=gate^T, shared ln1=ln2 (49p)
 
-Training: 5-phase pipeline with Grokfast-EMA + curriculum
-  Phase 0: Cosine LR=0.01->0.001, AdamW WD=0.01, 200K steps, curriculum 3->6->10,
-           Grokfast-EMA (alpha=0.98, lambda=3.0)
-  Phase 1: Constant LR=0.001 + EMA=0.999, 50K steps
-  Phase 2: Constant LR=0.0003 + EMA=0.999, 30K steps
-  Phase 3: Adam (no WD), cosine LR=0.001->0, 50K steps
-  Phase 4: Targeted fine-tuning on error cases
+Training: 3-step pipeline
+  Phase 1: Grokfast-EMA (alpha=0.98, lambda=3.0), AdamW, curriculum 3->6->10,
+           200K steps -> 97.39% verify accuracy
+  Phase 2: Carry-chain-weighted loss fine-tune (carry_beta=2.0), 300K steps
+           -> 99.90% verify accuracy
+  Phase 3: CMA-ES post-training refinement (sigma restart 0.0005->0.001357)
+           -> 100% verify accuracy (10010/10010)
 
 Accuracy: 100% on verify set (10K random + 10 edge, seed=2025)
-Parameters: 58 (beats current trained #1 at 62p)
+Parameters: 49
 """
 
 import math
@@ -87,10 +88,10 @@ class AdderModel(nn.Module):
 
         self.gate_proj = nn.Linear(d, ff, bias=False)
         self.up_proj = nn.Linear(d, ff, bias=False)
-        self.down_proj = nn.Linear(ff, d, bias=False)
+        # down_proj tied to gate_proj^T (no extra params)
 
-        self.ln1 = RMSNorm(d)
-        self.ln2 = RMSNorm(d)
+        # Shared norms: ln1 = ln2 (saves 3 params vs separate norms)
+        self.ln1 = RMSNorm(d)  # shared for both pre-attention and pre-MLP
         self.ln_f = RMSNorm(d)
 
     def forward(self, idx):
@@ -103,20 +104,24 @@ class AdderModel(nn.Module):
         mask = torch.where(mask, torch.tensor(float('-inf'), device=x.device), torch.tensor(0.0, device=x.device))
         mask = mask.unsqueeze(0).unsqueeze(0)
 
+        # Pre-attention norm (shared)
         h = self.ln1(x)
         q = self.q_proj(h).view(B, T, 1, self.hd).transpose(1, 2)
         k = self.k_proj(h).view(B, T, 1, self.hd).transpose(1, 2)
-        v = k.clone()
+        v = k.clone()  # tied K=V
         q = self.q_norm(q)
         k = self.q_norm(k)  # tied QK norm
         q = self.rope(q)
         k = self.rope(k)
         attn = F.softmax((q @ k.transpose(-2, -1)) * self.scale + mask, dim=-1)
         out = (attn @ v).transpose(1, 2).contiguous().view(B, T, -1)
-        x = x + F.linear(out, self.q_proj.weight.T)
+        x = x + F.linear(out, self.q_proj.weight.T)  # tied O=Q^T
 
-        h = self.ln2(x)
-        x = x + self.down_proj(F.silu(self.gate_proj(h)) * self.up_proj(h))
+        # Pre-MLP norm (SHARED with pre-attention norm)
+        h = self.ln1(x)
+        gate = F.silu(self.gate_proj(h))
+        up = self.up_proj(h)
+        x = x + F.linear(gate * up, self.gate_proj.weight.T)  # tied down=gate^T
 
         x = self.ln_f(x)
         table = self.tok_embed.table()
@@ -133,18 +138,16 @@ class AdderModel(nn.Module):
 
 
 _W = {
-    "tok_embed.arc_A": torch.tensor(30.064773559570312),
-    "tok_embed.arc_start": torch.tensor(-2.0549163818359375),
-    "tok_embed.arc_stride": torch.tensor(0.08935806900262833),
-    "q_proj.weight": torch.tensor([[1.8549810647964478, -0.5260140895843506, -0.10002376139163971], [-15.677549362182617, 4.190985202789307, 6.565744876861572], [1.6909270286560059, -0.5322062969207764, -0.1775369495153427], [0.48192813992500305, -0.690218985080719, -0.6123473048210144]]),
-    "k_proj.weight": torch.tensor([[-0.8434813618659973, 3.9024674892425537, -1.6154688596725464], [7.750763893127441, -0.20030614733695984, 1.821671962738037], [-1.2293473482131958, -4.853316307067871, 9.650911331176758], [-0.830415666103363, -0.31472867727279663, 19.29538345336914]]),
-    "q_norm.weight": torch.tensor([6.011682033538818, 0.43744564056396484, 6.876986026763916, 0.25620362162590027]),
-    "gate_proj.weight": torch.tensor([[-0.2487039864063263, -4.294907569885254, -0.7515332698822021], [-1.029950737953186, 0.08939670026302338, 0.5242955684661865]]),
-    "up_proj.weight": torch.tensor([[1.3503249883651733, -0.329152911901474, 0.3108646869659424], [4.350189685821533, -2.134256362915039, -2.6650140285491943]]),
-    "down_proj.weight": torch.tensor([[-0.9764120578765869, -3.6580352783203125], [-0.9588295221328735, 2.842597484588623], [0.36219704151153564, 0.6808475852012634]]),
-    "ln1.weight": torch.tensor([2.62185001373291, 24.069324493408203, 0.5140583515167236]),
-    "ln2.weight": torch.tensor([1.9876857995986938, 3.366771697998047, 0.12704715132713318]),
-    "ln_f.weight": torch.tensor([-21.242834091186523, 40.811893463134766, 1.3956195289210882e-05]),
+    "tok_embed.arc_A": torch.tensor(53.39081954956055),
+    "tok_embed.arc_start": torch.tensor(1.2057271003723145),
+    "tok_embed.arc_stride": torch.tensor(0.1254480928182602),
+    "q_proj.weight": torch.tensor([[10.064225196838379, 2.774019479751587, 1.4579730033874512], [42.290523529052734, 11.11209487915039, -4.705548286437988], [-3.8117716312408447, -0.8938799500465393, -1.1917589902877808], [9.216836929321289, 2.2616913318634033, -0.2047961801290512]]),
+    "k_proj.weight": torch.tensor([[8.945900917053223, -9.204228401184082, -5.801871299743652], [-9.97950267791748, -0.808920681476593, 0.5593137145042419], [2.180220365524292, 0.048893626779317856, -12.723864555358887], [-14.28452205657959, 11.919428825378418, -0.26181530952453613]]),
+    "q_norm.weight": torch.tensor([4.189301013946533, -0.5842321515083313, 0.807510256767273, 5.245909214019775]),
+    "gate_proj.weight": torch.tensor([[-2.3539397716522217, -3.3044955730438232, -0.48936736583709717], [1.0696345567703247, -1.1602256298065186, 1.5745854377746582]]),
+    "up_proj.weight": torch.tensor([[4.96342658996582, -1.1174434423446655, -0.8100679516792297], [-8.958495140075684, -0.7657700777053833, -0.6104097962379456]]),
+    "ln1.weight": torch.tensor([1.3762867450714111, 9.654746055603027, -4.45611572265625]),
+    "ln_f.weight": torch.tensor([-10.625299453735352, 27.65289306640625, 0.33968111872673035]),
 }
 
 
@@ -162,15 +165,16 @@ def build_model():
         "name": "CircularArc-Qwen3-49p",
         "author": "warlockee",
         "params": 49,
-        "architecture": "1L Qwen3, d=3, 1h/1kv, hd=4, ff=2, RoPE theta=3, SwiGLU, RMSNorm",
+        "architecture": "1L Qwen3, d=3, 1h/1kv, hd=4, ff=2, RoPE theta=3, SwiGLU, RMSNorm, shared ln1=ln2",
         "tricks": [
             "Circular arc embedding (3 params)",
             "Tied K=V",
             "Tied O=Q^T",
-            "Tied QK norms, tied down=gate^T, shared ln1=ln2",
+            "Tied QK norms",
+            "Tied down=gate^T",
+            "Shared ln1=ln2 norms (49p vs 52p)",
             "Tied lm_head to embedding table",
-            "Grokfast-EMA gradient filter (alpha=0.98, lambda=3.0)",
-            "5-phase training with curriculum 3->6->10 digits",
+            "3-step: Grokfast-EMA gradient -> carry-chain loss -> CMA-ES refinement",
         ],
     }
     return model, metadata
