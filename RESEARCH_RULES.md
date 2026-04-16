@@ -8,6 +8,27 @@ You are an automated research agent optimizing for the **AdderBoard competition*
 **If even ONE field matches a dead pattern below, DO NOT GENERATE the idea.**
 **Generating dead configs wastes GPU. 42+ confirmed dead experiments running RIGHT NOW, consuming ~50% of GPU.**
 
+### Proven Dead Config Patterns (machine-parseable for Tier 1 filter)
+```yaml
+- {sphere_norm: true}
+- {perp_grad: true}
+- {tie_qk: true}
+- {k_alpha_q: true}
+- {v_eq_q: true}
+- {k_alpha_last: true}
+- {sparse_gate: true}
+- {optimizer: muon}
+- {d_model: 2}
+- {d_model: 1}
+- {ff_dim: 1}
+- {head_dim: 3}
+- {head_dim: 2}
+- {head_dim: 1}
+- {grokfast_type: ma}
+- {grokfast_type: dual}
+- {grokfast_per_param_lambda: true}
+```
+
 **INSTANT REJECT — single field:**
 - `k_rot_q: true` WITHOUT `sphere_norm: true` → REJECT (100+ experiments, 0%). k_rot_q is ONLY allowed WITH sphere_norm.
 - `share_norms: false` → REJECT. **ALL new experiments MUST use share_norms: true (49p).** We are pivoting to 49p.
@@ -17,7 +38,7 @@ You are an automated research agent optimizing for the **AdderBoard competition*
 - `tie_qk: true` → REJECT
 - `k_alpha_q: true` → REJECT
 - `v_eq_q: true` → REJECT
-- `gate_alpha_up: true` → REJECT
+- `gate_alpha_up: true` → REJECT at 52p/49p/46p/45p/43p. **EXCEPTION: gate_alpha_up IS ALLOWED at 39p with full lokimorty stack (anti_quarter + share_ln_f + repeat_mix + gate_alpha_up). See THINKER PROPOSALS below.**
 - **`ff_mult` WITHOUT `ff_dim: 2` → REJECT (creates 76p model instead of 52p! BUG discovered 2026-04-10)**
 - **`grok_transfer_digits: 3` at 52p → REJECT (ALL experiments 0% on 3-digit pretrain at 52p.)**
 - **`grok_transfer_digits` (ANY value) with `grokfast_alpha: 0.98` → REJECT. GrokTransfer is DEAD with Recipe H. idea-2176 at 46K=0% vs plain Recipe H at 46K=17.8%. Pretrain interferes with Grokfast EMA.**
@@ -27,11 +48,26 @@ You are an automated research agent optimizing for the **AdderBoard competition*
 - **`grokfast_per_param_lambda: true` or similar per-param Grokfast → REJECT. Per-param Grokfast lambda DEAD (ideas 3120-3121, 0% at 30K).**
 - **`lookahead_alpha` or `lookahead_k` WITH `grokfast_alpha: 0.98` → REJECT. Lookahead is INCOMPATIBLE with Recipe H (alpha=0.98). idea-40c0d3: 0% at 26K, loss 2.01. Lookahead's weight averaging fights alpha=0.98's fast EMA.**
 - **`egd: true` at 49p (share_norms=true) → REJECT AT ANY LR. EGD DEAD at 49p with lr=0.01 (3507/3508) AND lr=0.003 (idea-0a9067 at 0% through 74K). EGD is incompatible with the 49p optimization landscape. BLANKET BAN at 49p.**
+- **`grokfast_lambda: 2.0` at 49p (share_norms=true, share_ln_f=false) → REJECT. Recipe H at 49p is BLANKET DEAD. lr=0.01: DEAD. lr=0.003: idea-0170e8 at 0%@76K with random loss. Lambda=2.0 grokking requires 3 separate norms to work.**
+- **`gate_alpha_up: true` WITHOUT `init_gate_alpha` (or with init_gate_alpha >= 0.5) → REJECT. gate_alpha=1.0 = tie_gate = DEAD. MUST use init_gate_alpha: 0.1 or lower. ALL 4 experiments with default init=1.0 showed loss=2.3026 at 48K (zero learning).** ⚠️ EXCEPTION: grokfast_lambda=2.0 at 43p/39p (share_ln_f=true) IS ALLOWED as a test variant — the ban was based on 49p data (different architecture).
+- **`k_alpha_last: true` OR `sparse_gate: true` → REJECT. Entire k_alpha_last path is DEAD. V=K=Q constraint too severe. 31p seed 314: 0%@186K. 33p seed 3141: 0%@72K. BLANKET BAN.**
+- **`distill_teacher_ckpt` at sub-49p → REJECT. Self-distillation ACTIVELY HARMFUL. idea-cd1fd5 loss=5.27 (2x random). KD loss with T^2 scaling overwhelms CE at this scale. BANNED.**
 
-**NOTE — dead seeds at 49p (UPDATED 2026-04-15T21:15):** Seeds 42 and 8 are CONFIRMED DEAD AT 49p. Seed 42: idea-087957 at 0%@94K. Seed 8: TWO experiments (idea-1e73ba, idea-22dff4) both at 0% with random/above-random loss at 32K. **DO NOT generate 49p experiments with seed 42 or seed 8.**
-Proven 49p seeds: 314 (97.39% → 99.31% via CMA-ES). Promising: 1337 (loss below random at 32K). Prioritize: 314, 1337, then sweep new seeds (13, 4242, 6174, 27, 3141, 7777, 2718, 17).
+**🚨🚨🚨 49p IS SOLVED. 46p IS DEAD (155/0). DO NOT GENERATE 49p OR 46p EXPERIMENTS. 🚨🚨🚨**
+**ALL new experiments MUST target 39p, 43p, or 45p.**
+**ALL configs MUST include `qk_norm_type: anti_quarter` AND `share_ln_f: true`.**
+**🚨🚨🚨 TRIPLE-CHECK: `qk_norm_type: anti_quarter` MUST APPEAR IN EVERY CONFIG. Without it, share_ln_f=true produces the DEAD 46p pattern (155/0). This check was failing — 6 experiments currently running as 46p WASTING GPUs. 🚨🚨🚨**
+**🚨🚨🚨 ALL sub-49p configs MUST include `diverge_patience: 500000`. The default 100K patience KILLS pre-grokking experiments. idea-e63961 (43p) was killed by this bug at 212K despite 62.9% per-digit accuracy. 🚨🚨🚨**
+**🔥🔥🔥 39p (rank #2) = anti_quarter + share_ln_f + gate_alpha_up + repeat_mix. VERIFIED 39 params. train_39p.py ready. 🔥🔥🔥**
+- `share_ln_f: true` WITHOUT `qk_norm_type: anti_quarter` → REJECT (= 46p, DEAD, 155/0 success rate)
+- `share_norms: true` WITHOUT `share_ln_f: true` → REJECT (= 49p, SOLVED)
+- `share_norms: false` → REJECT (= 52p, CLOSED)
+- **Missing `qk_norm_type: anti_quarter` in ANY config → INSTANT REJECT. This is the #1 source of GPU waste.**
 
-**🔥 CMA-ES UPDATED (2026-04-15T21:15): sigma=0.01 works at 49p from 97%+ base!** Previous sigma=0.001 was too small. Generate 49p experiments — ANY checkpoint reaching 97%+ gets CMA-ES treatment automatically.
+**🔥 43p/45p PIPELINE (UPDATED 2026-04-16T00:45): Experiments running. Same 3-step path if 90%+: gradient → carry-loss → CMA-ES.** Seeds: 314, 1337, 17, 13, 4242, 6174, 7777, 2718, 27, 3141. Steps: 1M minimum.
+
+**🚨 WARM-START BUG FIXED (2026-04-16T00:45)**: train.py used to auto-convert share_norms=True to warm_share_norms_step=50000. **THIS HAS BEEN REMOVED.** share_norms=True now means shared norms from step 0 (how 49p was proven to work). DO NOT add warm_share_norms_step unless explicitly testing the warm-start approach.
+- `warm_share_norms_step` in configs → REJECT (unless explicitly labeled as warm-start variant test)
 
 **INSTANT REJECT — architecture reductions (ALL 0%, verified 2026-04-10T16:00):**
 - `d_model: 2` or `d_model: 1` → REJECT (ALL 0%, multiple experiments: 6ff636, 1608fd, etc.)
@@ -83,7 +119,9 @@ Proven 49p seeds: 314 (97.39% → 99.31% via CMA-ES). Promising: 1337 (loss belo
   tie_down_gate: true
   tie_qk_norm: true
   share_norms: true
-  # share_ln_f defaults to false — do NOT include in config
+  share_ln_f: false
+  # 🚨 share_ln_f defaults to share_norms (=true), NOT false! Must explicitly set false for 49p.
+  # Without share_ln_f: false, you get 46p (ln_f shared with ln1/ln2).
   attn_out_rank: 0
   vocab_size: 10
   lr: 0.01
@@ -107,38 +145,43 @@ Proven 49p seeds: 314 (97.39% → 99.31% via CMA-ES). Promising: 1337 (loss belo
   **PROVEN: idea-900494 (seed 314) reached 97.39% verify at 200K steps. Longer runs (500K+) should push higher.**
   **🚨 DO NOT add `ff_mult`, `carry_bias`, or `tie_gate` — these are NOT in the proven config.**
 
-**🔥🔥🔥 RESEARCH PRIORITIES (UPDATED 2026-04-15T23:50 — PROFESSOR CYCLE) 🔥🔥🔥**
+**🔥🔥🔥 RESEARCH PRIORITIES (UPDATED 2026-04-16T04:45 — PROFESSOR CYCLE) 🔥🔥🔥**
 
-**🔥🔥🔥🔥🔥 49p@100% SOLVED!! SUBMIT AND PIVOT TO SUB-49p!! 🔥🔥🔥🔥🔥**
+**🔥🔥🔥🔥🔥 49p@100% SOLVED!! SUBMIT FIRST!! 🔥🔥🔥🔥🔥**
 
 **49p@100% is SOLVED and VERIFIED (10010/10010).** Checkpoint: results/cmaes-carry-loss-49p-stable-cuda3/checkpoint.pt.
 **submission_49p.py is ready. SUBMIT VIA PR TO anadim/AdderBoard.**
 
-**STOP generating 49p experiments.** Let existing seed sweeps (~37 running) finish. They provide additional 97%+ checkpoints useful for future sub-49p warm-start experiments.
+**🚨🚨🚨 STOP ALL 46p EXPERIMENTS — STATISTICALLY DEAD (155 attempts, 0 successes) 🚨🚨🚨**
 
-**🚨 CRITICAL: DO NOT generate new 49p experiments. 49p is CLOSED. 🚨**
+**🔥🔥🔥 43p UPDATE (2026-04-16T04:45): LEARNING SIGNAL CONFIRMED — λ=2.0 LEADS 🔥🔥🔥**
+- **43p (anti_quarter + share_ln_f) is the PRIMARY SUB-49p TARGET.**
+- **🔥 idea-bc2974 (seed 1337, λ=2.0): 0.4% accuracy at 18K steps!** Loss=1.01 (well below random). Per-digit mean=51.8%@10K. **STRONGEST early sub-49p signal ever.** λ=2.0 IS BETTER THAN λ=3.0 AT 43p.
+- idea-42ce3f (seed 3141, λ=3.0): loss=1.33@22K. Per-digit 53.2%@20K. Learning but no accuracy yet.
+- idea-2b8b15 (seed 314, λ=3.0): reset at 16K (divergence). Recovering.
+- **CONCLUSION: λ=2.0 should be PRIORITY for 43p. Generate more λ=2.0 seeds.**
+- **43p@100% = RANK #4 on trained leaderboard** (between tbukic 41p and 44p).
 
-**NEXT TARGET: SUB-49p**
+**🔥🔥🔥 PARAM COUNT TARGETS (UPDATED 2026-04-16T04:45 — PROFESSOR CYCLE) 🔥🔥🔥**
+| Config | Params | Rank if 100% | Status |
+|--------|--------|-------------|--------|
+| anti_quarter + share_ln_f | **43p** | **#4** | **🔥 LEARNING SIGNAL! seed 1337 λ=2.0: 0.4%@18K, loss=1.01. seed 3141 λ=3.0: per-digit 53%@20K.** |
+| anti_quarter + share_ln_f + gate_alpha_up + repeat_mix | **39p** | **#2** | **NO SIGNAL yet. idea-561432 (seed 3141): loss=2.3@14K. Very early — let run.** |
+| anti_quarter + share_ln_f + repeat_mix + o_tail_scale | **45p** | **#5** (ties tbukic) | 3 in queue. Previous dead (seed 3141@96K). |
+| k_alpha_last + sparse_gate | **31p** | **#1** | **DEAD. BLANKET BAN.** |
+| k_alpha_last + sparse_gate + repeat_mix + o_tail_scale | **33p** | **#1** | **DEAD. BLANKET BAN.** |
+| ~~RotationTransposeTiedLinear (tbukic)~~ | ~~**36p**~~ | ~~**#1 tie**~~ | BLOCKED (code not public). |
 
-**The competitive frontier:**
-| Target | Technique | Status | Feasibility |
-|--------|-----------|--------|-------------|
-| 46p | share_ln_f=true (ln1=ln2=ln_f all shared) | UNTESTED with carry-loss+CMA-ES | L2 gap=22.16 between ln1 and ln_f — needs new algorithm. WORTH TRYING. |
-| 45p | tbukic K=rot(Q), V=Q, O=Q^T, all norms shared | Requires code evolution | tbukic code partially public |
-| 39p | lokimorty RepeatMixBlock | Requires code evolution | Full code obtained |
-| 36p | tbukic RotationTransposeTiedLinear | Requires code evolution | Code NOT public |
-
-**TRACK 0: 46p EXPLORATION (HIGHEST PRIORITY — NEW)**
-- Config: Recipe 49A + `share_ln_f: true` (ln1=ln2=ln_f ALL shared = 46p)
-- 46p requires a DIFFERENT algorithm from 49p (norm weights diverge massively: L2=22.16)
-- Same pipeline: gradient training → carry-loss fine-tune → CMA-ES
-- Seeds: 314, 1337, 17, 27, 4242 (all unverified at 46p)
-- Steps: 1000000 minimum (46p will grok even slower than 49p)
-- **Generate 5 experiments with share_ln_f: true NOW.**
-- **If ANY 46p experiment reaches 90%+ → carry-loss fine-tune → CMA-ES.**
-- **46p@99%+ would rank above tbukic's 45p@100% on the leaderboard.**
-
-**Recipe 46A (share_ln_f base — COPY VERBATIM):**
+**TRACK 0: 39p EXPERIMENTS (HIGHEST PRIORITY — RANK #2 TARGET — INIT BUG FOUND AND FIXED)**
+- **39p = anti_quarter + share_ln_f + gate_alpha_up + repeat_mix. VERIFIED 39 params.**
+- **🚨🚨🚨 CRITICAL BUG (2026-04-16T01:50): gate_alpha_up with init_gate_alpha=1.0 = tie_gate = DEAD 🚨🚨🚨**
+  - ALL 4 running 39p gate_alpha_up experiments are at loss=2.3026 (random) at 48K steps
+  - Root cause: gate_alpha=1.0 → silu(1.0*up) = silu(up) = tie_gate (proven DEAD at all param counts)
+  - FIX: **init_gate_alpha: 0.1** (or 0.01) — MANDATORY for ALL gate_alpha_up experiments
+  - This makes gate start nearly linear, allowing the model to learn the optimal alpha value
+  - **ALSO TEST lambda=2.0**: DA found 46p+lambda=2.0 reaches 40.75%. Lambda=3.0 ban was from 49p only.
+- **lokimorty's training recipe is UNKNOWN** — gist contains inference code only, no training hyperparameters
+- Recipe 39A (CORRECTED — includes init_gate_alpha fix + diverge_patience fix):
 ```yaml
 d_model: 3
 n_heads: 1
@@ -148,6 +191,64 @@ ff_dim: 2
 n_layers: 1
 rope_theta: 3.0
 qk_norm: true
+qk_norm_type: anti_quarter
+use_swiglu: true
+use_rope: true
+norm_type: rms
+embed_type: circular_arc
+tie_embed: true
+tie_kv: true
+tie_qo: true
+tie_down_gate: true
+tie_qk_norm: true
+share_norms: true
+share_ln_f: true
+gate_alpha_up: true
+repeat_mix: true
+init_gate_alpha: 0.1
+attn_out_rank: 0
+vocab_size: 10
+lr: 0.01
+min_lr: 0.001
+weight_decay: 0.001
+ohem_ratio: 2.0
+steps: 1000000
+batch_size: 128
+warmup_steps: 1000
+curriculum: '3:2000,6:7000,10:rest'
+patience: 1000000
+diverge_patience: 500000
+grad_clip: 1.0
+eval_every: 2000
+optimizer: adamw
+commutative_aug: true
+grokfast_alpha: 0.98
+grokfast_lambda: 3.0
+crash_recovery_drop: 0.5
+dead_run_reset: true
+```
+- Recipe 39B (lambda=2.0 variant — TEST):
+  - Same as 39A but `grokfast_lambda: 2.0` and `grokfast_alpha: 0.98`
+  - Motivation: DA found 46p+lambda=2.0 reaches 40.75% while lambda=3.0 is dead/slow at sub-52p
+- Recipe 39C (smaller init alpha — TEST):
+  - Same as 39A but `init_gate_alpha: 0.01`
+- **Generate 6 experiments at 39p**: seeds 314, 1337, 17, 4242, 6174, 7777.
+  - Mix: 3x Recipe 39A (init_gate_alpha=0.1), 2x Recipe 39B (lambda=2.0), 1x Recipe 39C (init=0.01)
+- **WARNING**: lokimorty achieves 99.91% at 39p but their training recipe is unknown. Our recipes are HYPOTHESIS-DRIVEN based on what we've learned at other param counts.
+
+**TRACK 0b: 43p EXPERIMENTS (HIGH PRIORITY — CAN RUN NOW)**
+- **43p = anti_quarter_norm + share_ln_f + all existing tying. VERIFIED 43 params.**
+- Recipe 43A (EXACT — copy verbatim):
+```yaml
+d_model: 3
+n_heads: 1
+n_kv_heads: 1
+head_dim: 4
+ff_dim: 2
+n_layers: 1
+rope_theta: 3.0
+qk_norm: true
+qk_norm_type: anti_quarter
 use_swiglu: true
 use_rope: true
 norm_type: rms
@@ -170,6 +271,7 @@ batch_size: 128
 warmup_steps: 1000
 curriculum: '3:2000,6:7000,10:rest'
 patience: 1000000
+diverge_patience: 500000
 grad_clip: 1.0
 eval_every: 2000
 optimizer: adamw
@@ -179,15 +281,48 @@ grokfast_lambda: 3.0
 crash_recovery_drop: 0.5
 dead_run_reset: true
 ```
+- **Generate 10 experiments at 43p**: seeds 314, 1337, 17, 13, 4242, 6174, 7777, 2718, 27, 3141.
+  - Mix: 5x lambda=3.0, 5x lambda=2.0. **DA found 46p+lambda=2.0 reaches 40.75%. Lambda=3.0 experiments at 43p are very slow (e63961: 2-6% at 448K).**
+- Recipe 43B (lambda=2.0 variant):
+  - Same as Recipe 43A but `grokfast_lambda: 2.0`
+  - Motivation: 46p seed 17 reached 40.75% at 200K with lambda=2.0. Lambda=3.0 may be too aggressive for sub-52p models.
+- **WARNING**: share_ln_f=true is statistically dead at 46p. anti_quarter_norm may or may not change the optimization landscape. These experiments are HIGH RISK but HIGH REWARD (rank #4).
 
-**TRACK 1: LET EXISTING 49p SEED SWEEPS RUN (LOW PRIORITY — PASSIVE)**
-- ~37 experiments running at 49p. Let them finish. Don't kill them.
-- Any 97%+ checkpoint → carry-loss + CMA-ES → potentially another 49p@100% path
-- Useful for future warm-start experiments at sub-49p
+**TRACK 1: 45p EXPERIMENTS (HIGH PRIORITY — CAN RUN NOW)**
+- **45p = anti_quarter + share_ln_f + repeat_mix + o_tail_scale. VERIFIED 45 params.**
+- Recipe 45A = Recipe 43A + `repeat_mix: true` + `o_tail_scale: true` (MUST include `diverge_patience: 500000`)
+- repeat_mix gives virtual 2-layer depth which FUNDAMENTALLY changes the forward pass.
+- **Generate 5 experiments at 45p**: seeds 314, 1337, 17, 4242, 7777.
 
-**TRACK 2: CODE EVOLUTION FOR SUB-46p (MEDIUM PRIORITY)**
-- **RepeatMixBlock** (lokimorty, 39p): Full code obtained. CODE EVOLUTION CANDIDATE.
-- **RotationTransposeTiedLinear** (tbukic, 36p): Code NOT public. Search for any new releases.
+**TRACK 2: 31p/33p EXPERIMENTS (🔥🔥🔥🔥🔥 HIGHEST PRIORITY — RANK #1 TARGET 🔥🔥🔥🔥🔥)**
+- **🔥🔥🔥🔥🔥 31p CONFIRMED** — `k_alpha_last: true` + `sparse_gate: true` = **31 params (VERIFIED via model instantiation)**. **RANK #1** (below tbukic's 36p!).
+  - k_alpha_last: K = alpha * RoPE(QKnorm(Q)), 1p scalar applied AFTER norms/RoPE
+  - **CRITICAL: k_alpha_last also makes V=K=Q** — V projection is eliminated (train.py line 312/368). This is WHY 31p not 37p.
+  - sparse_gate: gate = silu(a * (x @ b)), rank-1 gate (5p instead of 6p)
+  - **RUNNING on GPU 0 (idea-f4c73c, seed 314). More seeds in queue.**
+  - **⚠️ RISK**: V=K=alpha*Q is VERY constrained. 31p may be below trainability threshold. But tbukic proves V=Q works at 36p.
+- **🔥🔥🔥🔥🔥 33p CONFIRMED** — above + `repeat_mix: true` + `o_tail_scale: true` = **33 params (VERIFIED)**. Also **RANK #1**.
+  - repeat_mix adds virtual 2-layer depth (may help overcome V=Q constraint)
+  - **RUNNING on GPU 0 (idea-3fcc8f, seed 3141).**
+- **⚠️ PREVIOUS CLAIMS OF 37p/39p FOR k_alpha_last PATH WERE WRONG** — V is NOT separate when k_alpha_last=True.
+- **DO NOT generate more k_alpha_last experiments until current ones reach 50K steps.** We need signal first.
+
+**TRACK 2b: 39p EXPERIMENTS (gate_alpha_up path — RANK #2 TARGET)**
+- **39p CONFIRMED** — gate_alpha_up + repeat_mix + tie_kv = **39 params (VERIFIED)**. Rank #2 tie with lokimorty.
+  - This path keeps V=K tying (separate 12p K/V projection), uses gate_alpha (1p) instead of gate_proj (6p).
+  - **3 running (seeds 4242, 6174, 7777) + 1 warm-converge (seed with norm_converge_lambda).**
+- **gate_alpha_up ban LIFTED for 39p** (ban was based on 52p experiments, invalid for full lokimorty stack).
+- **train_39p.py available** for direct training.
+
+**TRACK 3: RE-RUN 43p EXPERIMENTS WITH DIVERGE_PATIENCE FIX (CRITICAL)**
+- **idea-e63961 (43p seed 3141): DEAD** — killed by divergence detection bug at 212K. Per-digit was 62.9% (clearly learning). **BUG FIXED: `diverge_patience` config key added. MUST RE-RUN with `diverge_patience: 500000`.**
+- **idea-9f5340 (43p seed 17, λ=2.0): DEAD** at 0%.
+- **NaN bug killed 7/8 other 43p seeds.** Only 3141 ran with multiplicative fix.
+- **REGENERATE 43p experiments with both fixes** (NaN + diverge_patience). Seeds: 3141, 314, 1337, 17, 4242, 6174, 2718, 7777.
+
+**TRACK 4: CODE EVOLUTION FOR 36p (BLOCKED — NOW LESS URGENT)**
+- **RotationTransposeTiedLinear** (tbukic, 36p): Code NOT public. BLOCKED.
+- If 31p or 33p works, 36p target is MOOT (we'd already beat it).
 - These require train.py modifications. Do NOT generate config-only experiments for these.
 
 **CARRY-LOSS RECIPE (for any 90%+ checkpoint at 46p):**
@@ -197,39 +332,72 @@ python3 train_carry_loss.py --checkpoint <ckpt> --seed <seed> --steps 300000 --c
 python3 train_cmaes.py --checkpoint <carry-loss-ckpt> --sigma 0.01 --popsize 40 --time-limit 3600 --device cuda
 ```
 
-**❌ DEAD APPROACHES (UPDATED 2026-04-15):**
+**❌ DEAD APPROACHES (UPDATED 2026-04-16T07:00 — PROFESSOR CYCLE):**
 - 52p→49p weight projection: DEAD (0.2% best)
 - 49p→46p weight projection: EXPECTED DEAD (L2 gap=22.16 between ln1 and ln_f)
-- Recipe H (lambda=2.0, lr=0.01) at 49p: DEAD
+- **Recipe H (lambda=2.0) at 49p: DEAD AT ANY LR.** lr=0.01 DEAD. lr=0.003 DEAD (idea-0170e8: 0%@76K, loss=2.3026). **BLANKET BAN for Recipe H at 49p.**
 - EGD at 49p: DEAD at any LR. BLANKET BAN.
 - All 52p experiments: CLOSED. 49p@100% solved.
 - All CMA-ES on 49p: SOLVED. No more needed.
+- All NEW 49p experiments: CLOSED. 49p is SOLVED. Let existing sweeps finish only.
+- **🚨 ENTIRE k_alpha_last PATH IS DEAD (31p/33p/37p/39p-k_alpha): BLANKET BAN.** V=K=Q too constrained.
+  - 31p seed 314: DEAD (0%@186K). idea-f4c73c.
+  - 33p seed 3141: DEAD (0%@72K). idea-3fcc8f.
+  - **DO NOT generate ANY k_alpha_last or sparse_gate experiments.** All removed from queue.
+- **45p seed 3141: DEAD (0%@96K).** idea-24bbc7 killed by dead_run_reset.
+- **🚨 SELF-DISTILLATION IS HARMFUL AT SUB-49p: BANNED.** idea-cd1fd5 (43p distill from 49p teacher) had loss=5.27 (2x random). KD loss with T=2.0 and alpha=0.5 overwhelms CE loss at this scale. The T^2 scaling makes KD loss dominate, preventing the student from learning its own algorithm. **Do NOT generate distill_teacher_ckpt experiments.**
+- **39p idea-de8b65 (gate_alpha_up, seed 1337, λ=3.0): DEAD at 0%@60K.** dead_run_reset 3/3 exhausted.
+- **39p idea-fadeed (gate_alpha_up, seed 314, λ=2.0): DEAD at 0%@32K.** dead_run_reset 3/3 exhausted.
+- **43p idea-7d9882 (seed 6174, λ=2.0): DEAD at 0%@34K.** dead_run_reset 3/3 exhausted.
+- **45p idea-f9fa4c (repeat_mix, seed 7777): DEAD at 0%@32K.** dead_run_reset 3/3 exhausted.
 
 **DO NOT GENERATE:**
 - Any 52p experiments (share_norms: false) — PIVOT COMPLETE.
-- Any NEW 49p experiments (share_norms: true, share_ln_f: false) — 49p is SOLVED. Let existing sweeps finish.
+- Any NEW 49p experiments (share_norms: true, share_ln_f: false) — 49p is SOLVED.
 - Any TFT experiments — BANNED.
 - Architecture reductions below 46p (d_model<3, ff_dim<1, head_dim<3) — ALL DEAD.
 - Removing circular_arc embed — creates 79p, NOT sub-52p.
+- **Any k_alpha_last or sparse_gate experiments** — ENTIRE PATH DEAD. BANNED.
+- **Any distill_teacher_ckpt experiments at sub-49p** — ACTIVELY HARMFUL. BANNED.
 
 **DEAD PATTERNS:**
+- `diverge_patience` no longer required in config — **train.py auto-defaults to 500K when share_ln_f=true** (fixed 2026-04-16T07:00). Including it explicitly is still recommended but no longer a reject criterion.
 - `egd: true` at 49p or 46p — DEAD at any LR. BLANKET BAN.
 - **carry_loss fine-tune at lr=0.01** — DEAD. Use lr=0.001 or lower.
 - **49p→46p weight projection** — EXPECTED DEAD (L2 gap=22.16). Do NOT waste GPU.
 - Per-param LR with lambda=3.0 — DEAD
 - sphere_norm — DEAD
 - perpGrad — DEAD
+- **k_alpha_last + sparse_gate (ANY param count, ANY seed)** — DEAD. V=K=Q too constrained. BLANKET BAN.
+- **distill_teacher_ckpt at sub-49p** — HARMFUL. Loss 2x random. BANNED.
 
-**PROVEN SEEDS:** 314 (PROVEN at both 52p and 49p). 1337 (PROVEN at 52p, promising at 49p).
+**❌ SELF-DISTILLATION IS DEAD AT SUB-49p** — idea-cd1fd5 loss=5.27 (2x random). KD loss overwhelms CE at this scale. **BANNED. DO NOT generate distill_teacher_ckpt experiments.**
+
+**PROVEN SEEDS:** 314 (PROVEN at both 52p and 49p). 1337 (PROVEN at 52p, **SHOWING SIGNAL at 43p with λ=2.0**).
 **DEAD SEEDS at 49p:** 42, 8. (May be different at 46p — retest allowed.)
+**SUB-49p SEED VIABILITY (updated 2026-04-16T04:45):**
+- **🔥 43p seed 1337 (λ=2.0)**: 0.4% accuracy@18K. Loss=1.01. Per-digit 51.8%. **#1 PRIORITY EXPERIMENT.**
+- **⚠️ 43p seed 3141 (λ=3.0)**: Loss=1.33@22K. Per-digit 53.2%@20K. Learning but noisy.
+- **⚠️ 43p seed 314 (λ=3.0)**: Reset at 16K. Recovering.
+- **❌ 39p seed 3141 (λ=3.0)**: Loss=2.3@14K (random). Very early.
+- **❌ 31p/33p**: BLANKET DEAD.
+- **❌ 45p seed 3141**: DEAD at 0%@96K.
 
-## Diversity Budget (MANDATORY — updated 2026-04-15T23:50)
+## Diversity Budget (MANDATORY — updated 2026-04-16T05:00)
 Each batch of 5 ideas MUST include:
-- At least 3 ideas targeting 46p (share_ln_f: true) with DIFFERENT seeds
+- **At least 3 ideas targeting 43p** (anti_quarter + share_ln_f, lambda=3.0) — **CONFIRMED LEARNABLE. PRIMARY TARGET.**
+  - Mix seeds: 314, 1337, 4242, 6174, 7777, 2718, 3141
+  - Lambda=3.0 is CONFIRMED (e63961 learning). Lambda=2.0 also worth testing (2 ideas in queue).
+  - Distillation variant: add `distill_teacher_ckpt` from 49p@100% for 1 in 5 ideas
+- At most 1 idea targeting **39p** WITH `init_gate_alpha: 0.1` — rank #2 target, but current experiments dying. HIGH RISK.
+- At most 1 idea at **31p/33p or 45p** — deprioritized but not abandoned
 - At least 1 idea with steps >= 1000000
-- At most 1 idea at 49p (ONLY if testing a genuinely novel technique)
-- At most 1 Recipe H variant (lambda=2.0, lr=0.003) — low priority
-- DO NOT generate seed 42 at 49p — DEAD (untested at 46p, allowed there)
+- **ZERO 49p experiments** — 49p is SOLVED at 100%.
+- **ZERO 46p experiments** — 155/0, same rank as 49p. No competitive value.
+- **ZERO 52p experiments** — pivot complete.
+- All ideas MUST use `qk_norm_type: anti_quarter` AND `share_ln_f: true`.
+- **39p ideas MUST include `gate_alpha_up: true` AND `repeat_mix: true` AND `init_gate_alpha: 0.1`.**
+- **NEVER use gate_alpha_up without init_gate_alpha <= 0.1** — default 1.0 = tie_gate = DEAD.
 3. **BIPOP-CMA-ES** (new strategy from literature): alternate between large population/sigma for global search and small population/tight sigma for fine local search. More effective than pure IPOP on multimodal landscapes.
 
 **⚠️ YAML CORRUPTION BUG ⚠️**
@@ -307,28 +475,30 @@ targeted_ft_wrong_frac: 0.6   # 60% of batch from wrong examples
 
 **ALL new experiments MUST use share_norms: true. 52p experiments are BANNED.**
 
-### DEAD DIRECTIONS (UPDATED 2026-04-15 — 49p PIVOT)
+### DEAD DIRECTIONS (UPDATED 2026-04-16T04:15 — PROFESSOR CYCLE)
 
 - **ALL 52p experiments (share_norms: false)** — BANNED. Pivot complete.
+- **ALL 49p experiments (share_norms: true, share_ln_f: false)** — BANNED. 49p is SOLVED.
+- **ALL 46p experiments (share_ln_f: true WITHOUT anti_quarter)** — BANNED. 155 experiments, 0 successes. STATISTICALLY DEAD.
 - **ALL TFT variants** — EXHAUSTED. 7+ complete. BANNED.
-- **EGD + lr=0.01** — DEAD at 49p (3507/3508 at 0%).
-- **share_ln_f: true** — DEAD.
+- **EGD at any sub-52p** — DEAD. BLANKET BAN.
 - **sphere_norm** — DEAD AND BANNED (66 experiments).
 - **perpGrad** — DEAD AND BANNED.
 - **Muon optimizer** — DEAD AND BANNED.
-- **Architecture reductions below 49p** — ALL DEAD (d_model<3, ff_dim<1, head_dim<3).
-- **Removing circular_arc for "sub-52p"** — Creates 79p, NOT 49p. BANNED.
-- **grad_accum_steps > 1** — Effective large batch kills grokking. DEAD.
+- **Architecture reductions (d_model<3, ff_dim<1, head_dim<3)** — ALL DEAD.
+- **Removing circular_arc** — Creates 79p, NOT sub-52p. BANNED.
+- **grad_accum_steps > 1** — Large batch kills grokking. DEAD.
 - **grokfast_type: ma or dual** — ALL DEAD. BANNED.
 - **grokfast_per_param_lambda** — DEAD. BANNED.
 - **per-param LR + lambda=3.0** — DEAD (28/28 at 0%).
 - **k_rot_q WITHOUT sphere_norm** — DEAD (100+ at 0%).
-- **lookahead with alpha=0.98** — DEAD. Lookahead ONLY valid with alpha=0.99.
+- **lookahead with alpha=0.98** — DEAD.
+- **Recipe H (lambda=2.0) at sub-52p** — BLANKET DEAD at any LR.
 
-### GPU STATUS (UPDATED 2026-04-16T01:15 — PROFESSOR CYCLE)
-**4 CMA-ES runs (all GPUs) + 4 seed sweep experiments co-running.**
-- GPU 0: CMA-ES (old path, 9993/10010 climbing) + seed sweep
-- GPU 1: CMA-ES (carry-loss, 10009 stuck) + seed sweep
+### GPU STATUS (UPDATED 2026-04-16T04:15 — PROFESSOR CYCLE)
+**4 experiments running (3 stale 49p + 1 46p). All GPUs at 24-25% utilization.**
+- GPU 0: idea-121da0 (49p Lookahead seed 314 — stale but novel technique test)
+- GPU 1: idea-0157e8 (49p/46p seed 17 1M — only seed to show life at 46p)
 - GPU 2: CMA-ES (carry-loss, 10009 stuck) + seed sweep  
 - GPU 3: CMA-ES (carry-loss, 10009 stuck) + seed sweep
 **CMA-ES runs will finish within ~35 min. GPUs will then be available for more seed sweeps.**
@@ -363,8 +533,14 @@ targeted_ft_wrong_frac: 0.6   # 60% of batch from wrong examples
 - `sphere_norm` + Recipe B (per-param LR + lambda=4.0) — DEAD (idea-2131).
 
 **STILL NEEDING code evolution:**
-- **RotationTransposeTiedLinear** — down=rot(up^T). Enables 36p.
-- **RepeatMixBlock** — virtual 2-layer with shared block. Enables 39p.
+- **RotationTransposeTiedLinear** — down=rot(up^T). Enables 36p. Code NOT public.
+
+**ALREADY IMPLEMENTED (corrected 2026-04-16T01:00):**
+- RepeatMixBlock: IMPLEMENTED ✓ (`repeat_mix: true`)
+- k_alpha_last: IMPLEMENTED ✓ (K = alpha * RoPE(QKnorm(Q))). Key to 37p.
+- sparse_gate: IMPLEMENTED ✓ (rank-1 gate). Key to 37p.
+- gate_alpha_up: IMPLEMENTED ✓ (gate = alpha * up). Key to 39p path A.
+- o_tail_scale: IMPLEMENTED ✓. Part of 45p and 39p path B.
 
 ## What We Know Works
 1. **Architecture**: d=3, hd=4, ff_dim=2, SwiGLU, circular arc embed, RoPE theta=3
@@ -480,3 +656,70 @@ python3 train_carry_loss.py --seed 314 --steps 500000 --carry-beta 2.0 --lookahe
 
 ### DEAD: train_project_49p.py (52p→49p projection)
 Implemented and tested. Projection + CMA-ES on norm params. Result: 0%. DEAD.
+
+## THINKER PROPOSALS (2026-04-16 00:44 UTC) — PARADIGM SHIFT
+
+### CRITICAL FINDING: 39p IS ALREADY BUILDABLE — NO CODE EVOLUTION NEEDED
+**The "sparse_gate" and "k_alpha_last" labels in GOAL.md are WRONG.**
+39p = 43p (anti_quarter + share_ln_f) + gate_alpha_up (-5p) + repeat_mix (+1p) = **39 params**.
+ALL features already exist in train.py. Verified: `AdderTransformer(cfg).count_params() == 39`.
+
+**gate_alpha_up was BANNED at 52p** (ideas 2001-2010, ALL 0%) but those experiments used it
+in ISOLATION at 52p without anti_quarter, repeat_mix, or shared norms. At 39p with the full
+lokimorty architecture, it's a completely different optimization landscape.
+**lokimorty achieves 99.91% at 39p — rank #2 on the leaderboard.**
+
+**The gate_alpha_up ban DOES NOT APPLY to 39p with the full lokimorty stack.**
+
+### NEW: train_39p.py (39p lokimorty-architecture training)
+Direct training script for 39p using all existing infrastructure.
+
+**Launch commands:**
+```bash
+# Direct 39p training (shared norms from step 0):
+python3 train_39p.py --seed 314 --steps 1000000 --device cuda
+
+# With norm convergence regularization (start separate, converge gradually):
+python3 train_39p.py --seed 1337 --steps 1000000 --warm-converge --device cuda
+
+# Seed sweep:
+for s in 314 1337 17 4242 6174 7777; do
+  python3 train_39p.py --seed $s --steps 1000000 --device cuda &
+done
+
+# If 39p reaches 90%+, apply carry-loss → CMA-ES:
+python3 train_carry_loss.py --checkpoint results/39p-<seed>/checkpoint.pt --steps 300000
+python3 train_cmaes.py --checkpoint results/<carry-loss>/checkpoint.pt --sigma 0.01 --popsize 40
+```
+
+### NEW: Norm Convergence Regularization (train.py)
+Added `norm_converge_lambda` and `norm_converge_ramp` config keys.
+Adds L2 penalty between ln1, ln2, ln_f during separate-norm training phase.
+Forces norms to converge gradually before hard merge, avoiding the destructive
+"L2 gap=22.16" hard switch.
+
+**Config keys:**
+```yaml
+norm_converge_lambda: 0.5    # L2 penalty strength (0=disabled; 0.1-1.0 typical)
+norm_converge_ramp: 80000    # linearly ramp penalty from 0 to lambda over N steps
+warm_share_norms_step: 100000  # hard merge after convergence
+```
+
+### 39p PARAM BREAKDOWN (VERIFIED)
+| Component | Params | Notes |
+|-----------|--------|-------|
+| arc_A, arc_start, arc_stride | 3 | Circular arc embedding |
+| q_proj (4x3) | 12 | Also O=Q^T |
+| k_proj (4x3) | 12 | Also V=K |
+| q_norm (anti-quarter) | 1 | Shared with k_norm |
+| gate_alpha | 1 | gate = alpha * up (replaces 6p gate_proj) |
+| up_proj (2x3) | 6 | Also down=gate^T (but gate is scalar) |
+| ln1 (shared) | 3 | = ln2 = ln_f |
+| repeat_gain | 1 | Virtual 2-layer interpolation |
+| **TOTAL** | **39** | **Rank #2 if 99%+** |
+
+### PRIORITY UPDATE
+1. **39p experiments should run IN PARALLEL with 43p/45p**, not replace them
+2. **39p@99%+ would be rank #2** (only behind tbukic's 36p)
+3. **The 3-step pipeline applies**: gradient training → carry-loss → CMA-ES
+4. **gate_alpha_up ban is LIFTED for 39p with full lokimorty stack only**
