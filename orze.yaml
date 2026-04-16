@@ -13,10 +13,11 @@ train_extra_env:
 
 # --- GPU SCHEDULING (VRAM-based) ---
 gpu_scheduling:
+  mode: exclusive            # disable auto-VRAM-packing (tiny models read as 0% VRAM, auto mode sets max_jobs=90)
   max_vram_pct: 85          # stop filling GPU at 85% VRAM
   min_free_vram_mib: 2000   # require 2GB free minimum
   max_jobs_per_gpu: 3       # spread across all 4 GPUs (tiny models use <1GB each)
-  max_load_per_cpu: 1.0     # throttle when load/cpu exceeds this (shared machine)
+  max_load_per_cpu: 2.0     # throttle when load/cpu exceeds this (shared machine; raised from 1.0 — professor cycle 2026-04-16)
   min_free_ram_gb: 32       # throttle when free RAM drops below 32GB
 
 # --- TIMEOUTS ---
@@ -65,7 +66,7 @@ retrospection:
   auto_pause: false           # FSM controls pausing, not orze
   plateau_window: 20
   fail_window: 10
-  fail_threshold: 0.5
+  fail_threshold: 1.01
 
 # --- CODE EVOLUTION ---
 # Disabled at orze level — FSM dispatches triggers
@@ -115,6 +116,13 @@ roles:
     model: opus
     allowed_tools: "Read,Write,Edit,Glob,Grep,Bash"
     pausable: false           # bug fixer runs even when research is paused
+  data_analyst:
+    mode: claude
+    rules_file: orze-pro/src/orze_pro/prompts/DATA_ANALYST_RULES.md
+    cooldown: 600
+    timeout: 1500
+    model: opus
+    allowed_tools: "Read,Write,Edit,Glob,Grep,Bash"
   thinker:
     mode: claude
     model: claude-opus-4-6
